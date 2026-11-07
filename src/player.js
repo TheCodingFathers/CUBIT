@@ -1,0 +1,143 @@
+import * as THREE from 'three';
+import { COLORS } from './constants.js';
+import { input } from './input.js';
+
+// ---- Tuning values: change these to adjust how CUBIT feels ----
+const SPEED = 4; // walking speed (units per second)
+const JUMP_SPEED = 7.5; // upward speed at the start of a jump
+const GRAVITY = 22; // how fast CUBIT falls
+const MAX_FALL_SPEED = 15;
+const TURN_SPEED = 12; // how fast CUBIT turns to face its movement
+const FALL_LIMIT = -12; // below this height CUBIT respawns
+const START = new THREE.Vector3(0, 1.5, 0);
+
+// CUBIT's collision box is half this size in each direction (so 0.7 x 0.8 x 0.7)
+const HALF = { x: 0.35, y: 0.4, z: 0.35 };
+const EPS = 0.0001;
+
+export class Player {
+  constructor(scene, level) {
+    this.level = level;
+    this.position = START.clone(); // center of the collision box
+    this.velocityY = 0;
+    this.onGround = false;
+
+    // ---- Placeholder CUBIT model (the real Blender model comes later) ----
+    this.group = new THREE.Group();
+
+    this.visual = new THREE.Group(); // bobs up and down so CUBIT looks like it floats
+    this.group.add(this.visual);
+
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(0.8, 0.8, 0.8),
+      new THREE.MeshStandardMaterial({ color: COLORS.blue })
+    );
+    this.visual.add(body);
+
+    // Cyan eyes on the front face (the front is the +Z side)
+    const eyeGeometry = new THREE.BoxGeometry(0.12, 0.14, 0.04);
+    const eyeMaterial = new THREE.MeshBasicMaterial({ color: COLORS.cyan });
+    for (const side of [-1, 1]) {
+      const eye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+      eye.position.set(side * 0.17, 0.12, 0.41);
+      this.visual.add(eye);
+    }
+
+    // Small orange energy core on the front
+    const core = new THREE.Mesh(
+      new THREE.BoxGeometry(0.2, 0.2, 0.06),
+      new THREE.MeshStandardMaterial({
+        color: COLORS.orange,
+        emissive: COLORS.orange,
+        emissiveIntensity: 1,
+      })
+    );
+    core.position.set(0, -0.17, 0.41);
+    this.visual.add(core);
+
+    scene.add(this.group);
+    this.group.position.copy(this.position);
+  }
+
+  // forward = the direction "up the screen" on the ground (comes from the camera)
+  update(delta, elapsed, forward) {
+    const right = new THREE.Vector3(-forward.z, 0, forward.x);
+
+    // ---- Read the keys ----
+    const move = new THREE.Vector3();
+    if (input.isDown('KeyW')) move.add(forward);
+    if (input.isDown('KeyS')) move.sub(forward);
+    if (input.isDown('KeyD')) move.add(right);
+    if (input.isDown('KeyA')) move.sub(right);
+    if (move.lengthSq() > 0) move.normalize();
+
+    // ---- Jump and gravity ----
+    if (input.wasPressed('Space') && this.onGround) {
+      this.velocityY = JUMP_SPEED;
+    }
+    this.velocityY = Math.max(this.velocityY - GRAVITY * delta, -MAX_FALL_SPEED);
+
+    // ---- Move one axis at a time so CUBIT slides along walls ----
+    this.moveAxis('x', move.x * SPEED * delta);
+    this.moveAxis('z', move.z * SPEED * delta);
+
+    this.onGround = false;
+    const hitY = this.moveAxis('y', this.velocityY * delta);
+    if (hitY) {
+      if (this.velocityY < 0) this.onGround = true; // landed on something
+      this.velocityY = 0; // landed, or bumped a ceiling
+    }
+
+    // ---- Respawn if CUBIT falls off the world ----
+    if (this.position.y < FALL_LIMIT) {
+      this.position.copy(START);
+      this.velocityY = 0;
+    }
+
+    // ---- Update the visible model ----
+    this.group.position.copy(this.position);
+    this.visual.position.y = 0.1 + Math.sin(elapsed * 3) * 0.04; // gentle floating
+
+    if (move.lengthSq() > 0) {
+      const target = Math.atan2(move.x, move.z);
+      const diff =
+        THREE.MathUtils.euclideanModulo(target - this.group.rotation.y + Math.PI, Math.PI * 2) -
+        Math.PI;
+      this.group.rotation.y += diff * Math.min(1, TURN_SPEED * delta);
+    }
+  }
+
+  // Moves CUBIT along one axis. If it ends up inside a cube, push it back out.
+  // Returns true if it hit something.
+  moveAxis(axis, amount) {
+    if (amount === 0) return false;
+
+    const p = this.position;
+    p[axis] += amount;
+
+    // Which grid cells does CUBIT's box overlap? (cell i covers i-0.5 to i+0.5)
+    const x0 = Math.floor(p.x - HALF.x + EPS + 0.5);
+    const x1 = Math.floor(p.x + HALF.x - EPS + 0.5);
+    const y0 = Math.floor(p.y - HALF.y + EPS + 0.5);
+    const y1 = Math.floor(p.y + HALF.y - EPS + 0.5);
+    const z0 = Math.floor(p.z - HALF.z + EPS + 0.5);
+    const z1 = Math.floor(p.z + HALF.z - EPS + 0.5);
+
+    let hit = false;
+    for (let x = x0; x <= x1; x++) {
+      for (let y = y0; y <= y1; y++) {
+        for (let z = z0; z <= z1; z++) {
+          if (!this.level.isSolid(x, y, z)) continue;
+          hit = true;
+          const cellCenter = { x, y, z }[axis];
+          if (amount > 0) {
+            p[axis] = Math.min(p[axis], cellCenter - 0.5 - HALF[axis]);
+          } else {
+            p[axis] = Math.max(p[axis], cellCenter + 0.5 + HALF[axis]);
+          }
+        }
+      }
+    }
+    return hit;
+  }
+}
