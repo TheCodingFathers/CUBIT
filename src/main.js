@@ -4,6 +4,10 @@ import { COLORS } from './constants.js';
 import { input } from './input.js';
 import { createTestRoom } from './level.js';
 import { Player } from './player.js';
+import { ShiftableBlock } from './shiftableBlock.js';
+import { RotatableStructure } from './rotatableStructure.js';
+import { PuzzleManager } from './puzzleManager.js';
+import { CoreFragment, FragmentManager } from './coreFragment.js';
 
 // ---------------------------------------------------------------
 // Settings you can tweak. Lower PIXEL_RATIO_CAP = faster on weak GPUs.
@@ -42,9 +46,23 @@ sun.position.set(4, 8, 3);
 scene.add(sun);
 
 // ---------------------------------------------------------------
-// The world: a test room and CUBIT
+// The world: test room, puzzle pieces, and CUBIT
 // ---------------------------------------------------------------
-const level = createTestRoom(scene);
+const { level, blocks, structures, fragments: fragmentCells } = createTestRoom(scene);
+
+const puzzles = new PuzzleManager();
+for (const data of blocks) {
+  puzzles.add(new ShiftableBlock(scene, level, data.positions));
+}
+for (const data of structures) {
+  puzzles.add(new RotatableStructure(scene, level, data));
+}
+
+const fragments = new FragmentManager();
+for (const cell of fragmentCells) {
+  fragments.add(new CoreFragment(scene, cell));
+}
+
 const player = new Player(scene, level);
 
 // "Up the screen" on the ground = the direction the camera looks, flattened.
@@ -71,8 +89,44 @@ window.addEventListener('resize', () => {
 // ---------------------------------------------------------------
 const clock = new THREE.Clock();
 const fpsLabel = document.getElementById('fps');
+const promptLabel = document.getElementById('prompt');
+const fragmentCountLabel = document.getElementById('fragment-count');
+const completeScreen = document.getElementById('complete');
 let frames = 0;
 let fpsTimer = 0;
+
+// Shows "collected / total" and the level-complete message
+function updateHud() {
+  fragmentCountLabel.textContent = `${fragments.collectedCount} / ${fragments.total}`;
+  completeScreen.classList.toggle('visible', fragments.allCollected);
+}
+updateHud();
+
+// Builds the prompt text for the abilities that are in range right now
+function updatePrompt() {
+  const parts = [];
+  let anyAvailable = false;
+
+  const shift = puzzles.findTarget(player, 'shift');
+  if (shift) {
+    parts.push(shift.canActivate ? 'Q  SHIFT' : 'Q  SHIFT (blocked)');
+    anyAvailable = anyAvailable || shift.canActivate;
+  }
+
+  const rotate = puzzles.findTarget(player, 'rotate');
+  if (rotate) {
+    parts.push(rotate.canActivate ? 'R  ROTATE' : 'R  ROTATE (blocked)');
+    anyAvailable = anyAvailable || rotate.canActivate;
+  }
+
+  if (parts.length === 0) {
+    promptLabel.classList.remove('visible');
+    return;
+  }
+  promptLabel.textContent = parts.join('     ');
+  promptLabel.classList.add('visible');
+  promptLabel.classList.toggle('blocked', !anyAvailable);
+}
 
 function animate() {
   requestAnimationFrame(animate);
@@ -81,7 +135,20 @@ function animate() {
   const delta = Math.min(rawDelta, 1 / 30); // cap it so a lag spike can't break collision
   const elapsed = clock.elapsedTime;
 
+  // Abilities: SHIFT (Q), ROTATE (R), and reset (Backspace)
+  if (input.wasPressed('KeyQ')) puzzles.tryActivate(player, 'shift');
+  if (input.wasPressed('KeyR')) puzzles.tryActivate(player, 'rotate');
+  if (input.wasPressed('Backspace')) {
+    puzzles.resetAll();
+    fragments.reset();
+    player.reset();
+    updateHud();
+  }
+
   player.update(delta, elapsed, forward);
+  puzzles.update(delta);
+  if (fragments.update(delta, elapsed, player)) updateHud();
+  updatePrompt();
 
   // Smooth camera follow
   desiredCameraPosition.copy(player.position).add(CAMERA_OFFSET);

@@ -90,8 +90,7 @@ export class Player {
 
     // ---- Respawn if CUBIT falls off the world ----
     if (this.position.y < FALL_LIMIT) {
-      this.position.copy(START);
-      this.velocityY = 0;
+      this.reset();
     }
 
     // ---- Update the visible model ----
@@ -105,6 +104,24 @@ export class Player {
         Math.PI;
       this.group.rotation.y += diff * Math.min(1, TURN_SPEED * delta);
     }
+  }
+
+  // Put CUBIT back at the start
+  reset() {
+    this.position.copy(START);
+    this.velocityY = 0;
+    this.onGround = false;
+  }
+
+  // Is CUBIT's box overlapping the grid cell (x, y, z)?
+  // topMargin extends the cell upward, so "standing on top of it" also counts.
+  overlapsCell(x, y, z, topMargin = 0) {
+    const p = this.position;
+    const overlapX = Math.abs(p.x - x) < HALF.x + 0.5 - EPS;
+    const overlapZ = Math.abs(p.z - z) < HALF.z + 0.5 - EPS;
+    const overlapY =
+      p.y + HALF.y > y - 0.5 + EPS && p.y - HALF.y < y + 0.5 + topMargin - EPS;
+    return overlapX && overlapZ && overlapY;
   }
 
   // Moves CUBIT along one axis. If it ends up inside a cube, push it back out.

@@ -32,3 +32,104 @@ body {
   pointer-events: none; /* never blocks clicks on the game */
   user-select: none;
 }
+
+/* Interaction prompt: dark navy panel with a cyan accent */
+#prompt {
+  position: fixed;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 18px;
+  background: rgba(10, 18, 48, 0.85);
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  font-family: monospace;
+  font-size: 16px;
+  letter-spacing: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+  user-select: none;
+}
+
+#prompt.visible {
+  opacity: 1;
+}
+
+/* Shown when SHIFT is not possible right now */
+#prompt.blocked {
+  border-color: #5a6a94;
+  color: #8a98c0;
+}
+
+/* HUD: Core Fragment counter, top-right (orange = core energy) */
+#hud {
+  position: fixed;
+  top: 10px;
+  right: 14px;
+  padding: 6px 14px;
+  background: rgba(10, 18, 48, 0.85);
+  border: 1px solid var(--orange);
+  font-family: monospace;
+  font-size: 15px;
+  letter-spacing: 2px;
+  color: var(--orange);
+  pointer-events: none;
+  user-select: none;
+}
+
+#hud .hud-label {
+  margin-right: 10px;
+  opacity: 0.8;
+}
+
+/* Level complete panel, centered */
+#complete {
+  position: fixed;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 24px 48px;
+  text-align: center;
+  background: rgba(10, 18, 48, 0.9);
+  border: 1px solid var(--cyan);
+  font-family: monospace;
+  opacity: 0;
+  transition: opacity 0.4s;
+  pointer-events: none;
+  user-select: none;
+}
+
+#complete.visible {
+  opacity: 1;
+}
+
+#complete .complete-title {
+  font-size: 28px;
+  letter-spacing: 6px;
+  color: var(--orange);
+}
+
+#complete .complete-sub {
+  margin-top: 10px;
+  font-size: 15px;
+  color: var(--cyan);
+}
+
+#complete .complete-hint {
+  margin-top: 14px;
+  font-size: 13px;
+  color: #8a98c0;
+}
+
+/* Controls reminder, bottom-left */
+#controls {
+  position: fixed;
+  bottom: 12px;
+  left: 14px;
+  font-family: monospace;
+  font-size: 12px;
+  color: #6f7fa8;
+  pointer-events: none;
+  user-select: none;
+}
