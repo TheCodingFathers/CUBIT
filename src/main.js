@@ -2,12 +2,9 @@ import './style.css';
 import * as THREE from 'three';
 import { COLORS } from './constants.js';
 import { input } from './input.js';
-import { createTestRoom } from './level.js';
 import { Player } from './player.js';
-import { ShiftableBlock } from './shiftableBlock.js';
-import { RotatableStructure } from './rotatableStructure.js';
-import { PuzzleManager } from './puzzleManager.js';
-import { CoreFragment, FragmentManager } from './coreFragment.js';
+import { LevelManager } from './levelManager.js';
+import { LEVELS } from './levels/index.js';
 
 // ---------------------------------------------------------------
 // Settings you can tweak. Lower PIXEL_RATIO_CAP = faster on weak GPUs.
@@ -46,34 +43,24 @@ sun.position.set(4, 8, 3);
 scene.add(sun);
 
 // ---------------------------------------------------------------
-// The world: test room, puzzle pieces, and CUBIT
+// CUBIT and the levels
 // ---------------------------------------------------------------
-const { level, blocks, structures, fragments: fragmentCells } = createTestRoom(scene);
-
-const puzzles = new PuzzleManager();
-for (const data of blocks) {
-  puzzles.add(new ShiftableBlock(scene, level, data.positions));
-}
-for (const data of structures) {
-  puzzles.add(new RotatableStructure(scene, level, data));
-}
-
-const fragments = new FragmentManager();
-for (const cell of fragmentCells) {
-  fragments.add(new CoreFragment(scene, cell));
-}
-
-const player = new Player(scene, level);
+const player = new Player(scene);
+const levels = new LevelManager(scene, player, LEVELS);
+levels.load(0);
 
 // "Up the screen" on the ground = the direction the camera looks, flattened.
 // W/A/S/D move relative to this, so W always walks away from the camera.
 const forward = new THREE.Vector3(-CAMERA_OFFSET.x, 0, -CAMERA_OFFSET.z).normalize();
 
-// Start the camera already in position so it doesn't swoop in
-camera.position.copy(player.position).add(CAMERA_OFFSET);
-
 const desiredCameraPosition = new THREE.Vector3();
 const lookTarget = new THREE.Vector3();
+
+// Put the camera right behind CUBIT instantly (used when a level loads)
+function snapCamera() {
+  camera.position.copy(player.position).add(CAMERA_OFFSET);
+}
+snapCamera();
 
 // ---------------------------------------------------------------
 // Keep the view correct when the window is resized
@@ -85,20 +72,23 @@ window.addEventListener('resize', () => {
 });
 
 // ---------------------------------------------------------------
-// Game loop: runs once per frame
+// HUD
 // ---------------------------------------------------------------
 const clock = new THREE.Clock();
 const fpsLabel = document.getElementById('fps');
 const promptLabel = document.getElementById('prompt');
 const fragmentCountLabel = document.getElementById('fragment-count');
 const completeScreen = document.getElementById('complete');
+const completeHint = document.getElementById('complete-hint');
 let frames = 0;
 let fpsTimer = 0;
 
 // Shows "collected / total" and the level-complete message
 function updateHud() {
+  const fragments = levels.fragments;
   fragmentCountLabel.textContent = `${fragments.collectedCount} / ${fragments.total}`;
-  completeScreen.classList.toggle('visible', fragments.allCollected);
+  completeHint.textContent = levels.hasNext ? 'Enter for the next level' : 'Backspace to play again';
+  completeScreen.classList.toggle('visible', levels.complete);
 }
 updateHud();
 
@@ -107,13 +97,13 @@ function updatePrompt() {
   const parts = [];
   let anyAvailable = false;
 
-  const shift = puzzles.findTarget(player, 'shift');
+  const shift = levels.puzzles.findTarget(player, 'shift');
   if (shift) {
     parts.push(shift.canActivate ? 'Q  SHIFT' : 'Q  SHIFT (blocked)');
     anyAvailable = anyAvailable || shift.canActivate;
   }
 
-  const rotate = puzzles.findTarget(player, 'rotate');
+  const rotate = levels.puzzles.findTarget(player, 'rotate');
   if (rotate) {
     parts.push(rotate.canActivate ? 'R  ROTATE' : 'R  ROTATE (blocked)');
     anyAvailable = anyAvailable || rotate.canActivate;
@@ -128,6 +118,9 @@ function updatePrompt() {
   promptLabel.classList.toggle('blocked', !anyAvailable);
 }
 
+// ---------------------------------------------------------------
+// Game loop: runs once per frame
+// ---------------------------------------------------------------
 function animate() {
   requestAnimationFrame(animate);
 
@@ -135,19 +128,24 @@ function animate() {
   const delta = Math.min(rawDelta, 1 / 30); // cap it so a lag spike can't break collision
   const elapsed = clock.elapsedTime;
 
-  // Abilities: SHIFT (Q), ROTATE (R), and reset (Backspace)
-  if (input.wasPressed('KeyQ')) puzzles.tryActivate(player, 'shift');
-  if (input.wasPressed('KeyR')) puzzles.tryActivate(player, 'rotate');
+  // Abilities: SHIFT (Q) and ROTATE (R)
+  if (input.wasPressed('KeyQ')) levels.puzzles.tryActivate(player, 'shift');
+  if (input.wasPressed('KeyR')) levels.puzzles.tryActivate(player, 'rotate');
+
+  // Restart the level (Backspace), or go on to the next one when finished (Enter)
   if (input.wasPressed('Backspace')) {
-    puzzles.resetAll();
-    fragments.reset();
-    player.reset();
+    levels.restart();
+    snapCamera();
+    updateHud();
+  }
+  if (input.wasPressed('Enter') && levels.complete && levels.hasNext) {
+    levels.next();
+    snapCamera();
     updateHud();
   }
 
   player.update(delta, elapsed, forward);
-  puzzles.update(delta);
-  if (fragments.update(delta, elapsed, player)) updateHud();
+  if (levels.update(delta, elapsed)) updateHud();
   updatePrompt();
 
   // Smooth camera follow

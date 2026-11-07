@@ -55,71 +55,23 @@ export class Level {
   }
 }
 
-// Test room with two puzzles:
-//  1) SHIFT: a raised platform that is too high to jump onto. A block can be slid next to it as a step.
-//  2) ROTATE: a gap too wide to jump. A tall wall on the edge can be turned 90 degrees to become a bridge.
-export function createTestRoom(scene) {
-  const level = new Level(scene);
+// Builds the static cubes of a level from its data (see levels/testRoom.js).
+// 'parent' is the group the cubes are added to.
+export function buildLevel(parent, data) {
+  const level = new Level(parent);
+  const holes = new Set((data.holes ?? []).map((cell) => cell.join(',')));
 
-  // Floor (9x9). The cell (-4, 0, 0) is left out: the rotatable wall stands there.
-  for (let x = -4; x <= 4; x++) {
-    for (let z = -4; z <= 4; z++) {
-      if (x === -4 && z === 0) continue;
-      level.addCube(x, 0, z);
-    }
-  }
-
-  // SHIFT puzzle: raised 3x3 platform, two cubes tall (CUBIT can only jump one cube high)
-  for (let x = 2; x <= 4; x++) {
-    for (let y = 1; y <= 2; y++) {
-      for (let z = -4; z <= -2; z++) {
-        level.addCube(x, y, z);
+  for (const { from, to } of data.boxes) {
+    for (let x = from[0]; x <= to[0]; x++) {
+      for (let y = from[1]; y <= to[1]; y++) {
+        for (let z = from[2]; z <= to[2]; z++) {
+          if (holes.has(`${x},${y},${z}`)) continue;
+          level.addCube(x, y, z);
+        }
       }
     }
   }
 
-  // ROTATE puzzle: far platform on the other side of a 4-cube-wide gap (x from -8 to -5)
-  for (let x = -11; x <= -9; x++) {
-    for (let z = -1; z <= 1; z++) {
-      level.addCube(x, 0, z);
-    }
-  }
-
   level.build();
-
-  // Shiftable blocks: each one lists the cells it can move between.
-  const blocks = [
-    {
-      positions: [
-        [-3, 1, 2],
-        [1, 1, -3],
-      ],
-    },
-  ];
-
-  // Rotatable structures: a wall of 5 cubes standing on the edge of the floor.
-  // It turns around its bottom cube (the pivot). At 90 degrees it lies across the gap as a bridge.
-  const structures = [
-    {
-      pivot: [-4, 0, 0],
-      axis: 'z',
-      offsets: [
-        [0, 0, 0],
-        [0, 1, 0],
-        [0, 2, 0],
-        [0, 3, 0],
-        [0, 4, 0],
-      ],
-      angles: [0, 90],
-    },
-  ];
-
-  // Core Fragments: each one floats above the cube listed here.
-  // One is on the raised platform (needs SHIFT), one on the far platform (needs ROTATE).
-  const fragments = [
-    [3, 2, -3],
-    [-10, 0, 0],
-  ];
-
-  return { level, blocks, structures, fragments };
+  return level;
 }

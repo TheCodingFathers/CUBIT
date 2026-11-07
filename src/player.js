@@ -16,8 +16,9 @@ const HALF = { x: 0.35, y: 0.4, z: 0.35 };
 const EPS = 0.0001;
 
 export class Player {
-  constructor(scene, level) {
-    this.level = level;
+  constructor(scene) {
+    this.level = null; // set by setLevel() when a level is loaded
+    this.start = START.clone(); // where CUBIT respawns in the current level
     this.position = START.clone(); // center of the collision box
     this.velocityY = 0;
     this.onGround = false;
@@ -106,9 +107,15 @@ export class Player {
     }
   }
 
+  // Called by the LevelManager when a new level is loaded
+  setLevel(level, startCell) {
+    this.level = level;
+    this.start.set(...startCell);
+  }
+
   // Put CUBIT back at the start
   reset() {
-    this.position.copy(START);
+    this.position.copy(this.start);
     this.velocityY = 0;
     this.onGround = false;
   }
