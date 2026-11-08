@@ -13,6 +13,7 @@ const FALL_LIMIT = -12; // below this height CUBIT respawns
 const START = new THREE.Vector3(0, 1.5, 0);
 const MODEL_URL = '/models/cubit.glb'; // made in Blender, lives in public/models/
 const BLEND_TIME = 0.2; // seconds to blend between animations
+const LAND_MIN_SPEED = 5; // falling faster than this when touching ground plays the Land squash
 
 // CUBIT's collision box is half this size in each direction (so 0.7 x 0.8 x 0.7)
 const HALF = { x: 0.35, y: 0.4, z: 0.35 };
@@ -102,8 +103,8 @@ export class Player {
             this.actions.Jump.setLoop(THREE.LoopOnce, 1);
             this.actions.Jump.clampWhenFinished = true;
           }
-          // Interact and Collect play once, then control goes back to Idle / Walk / Jump / Fall
-          for (const name of ['Interact', 'Collect']) {
+          // Interact, Collect and Land play once, then control goes back to Idle / Walk / Jump / Fall
+          for (const name of ['Interact', 'Collect', 'Land']) {
             if (this.actions[name]) {
               this.actions[name].setLoop(THREE.LoopOnce, 1);
               this.actions[name].clampWhenFinished = false;
@@ -176,10 +177,15 @@ export class Player {
     this.moveAxis('x', move.x * SPEED * delta);
     this.moveAxis('z', move.z * SPEED * delta);
 
+    const wasOnGround = this.onGround;
     this.onGround = false;
     const hitY = this.moveAxis('y', this.velocityY * delta);
     if (hitY) {
-      if (this.velocityY < 0) this.onGround = true; // landed on something
+      if (this.velocityY < 0) {
+        this.onGround = true; // landed on something
+        // A real landing (not just standing) plays the squash, unless another one-shot is playing
+        if (!wasOnGround && this.velocityY < -LAND_MIN_SPEED && !this.oneShot) this.play('Land');
+      }
       this.velocityY = 0; // landed, or bumped a ceiling
     }
 
