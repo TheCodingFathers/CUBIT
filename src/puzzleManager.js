@@ -12,22 +12,35 @@ export class PuzzleManager {
     this.items.push(item);
   }
 
-  // Finds the nearest item of this kind within range, or null if none is close enough.
+  // Finds the best item of this kind within range, or null if none is close enough.
+  // Items that can be used right now win over blocked ones (for example, the block
+  // CUBIT is standing on), so a blocked item never hides one that works.
+  // Among those, the nearest wins.
   findTarget(player, kind) {
     let best = null;
-    let bestDistance = INTERACT_RANGE;
+    let bestCanActivate = false;
+    let bestDistance = Infinity;
 
     for (const item of this.items) {
       if (item.kind !== kind) continue;
       const distance = item.distanceTo(player.position);
-      if (distance <= bestDistance) {
-        bestDistance = distance;
+      if (distance > INTERACT_RANGE) continue;
+
+      const canActivate = item.canActivate(player);
+      const better =
+        best === null ||
+        (canActivate && !bestCanActivate) ||
+        (canActivate === bestCanActivate && distance < bestDistance);
+
+      if (better) {
         best = item;
+        bestCanActivate = canActivate;
+        bestDistance = distance;
       }
     }
 
     if (!best) return null;
-    return { item: best, canActivate: best.canActivate(player) };
+    return { item: best, canActivate: bestCanActivate };
   }
 
   // Called when the player presses SHIFT (Q) or ROTATE (R)

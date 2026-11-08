@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { COLORS } from './constants.js';
 import { input } from './input.js';
 
@@ -10,6 +11,7 @@ const MAX_FALL_SPEED = 15;
 const TURN_SPEED = 12; // how fast CUBIT turns to face its movement
 const FALL_LIMIT = -12; // below this height CUBIT respawns
 const START = new THREE.Vector3(0, 1.5, 0);
+const MODEL_URL = '/models/cubit.glb'; // made in Blender, lives in public/models/
 
 // CUBIT's collision box is half this size in each direction (so 0.7 x 0.8 x 0.7)
 const HALF = { x: 0.35, y: 0.4, z: 0.35 };
@@ -29,11 +31,15 @@ export class Player {
     this.visual = new THREE.Group(); // bobs up and down so CUBIT looks like it floats
     this.group.add(this.visual);
 
+    // Placeholder box: shown until the Blender model has loaded (and kept if loading fails)
+    this.placeholder = new THREE.Group();
+    this.visual.add(this.placeholder);
+
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(0.8, 0.8, 0.8),
       new THREE.MeshStandardMaterial({ color: COLORS.blue })
     );
-    this.visual.add(body);
+    this.placeholder.add(body);
 
     // Cyan eyes on the front face (the front is the +Z side)
     const eyeGeometry = new THREE.BoxGeometry(0.12, 0.14, 0.04);
@@ -41,7 +47,7 @@ export class Player {
     for (const side of [-1, 1]) {
       const eye = new THREE.Mesh(eyeGeometry, eyeMaterial);
       eye.position.set(side * 0.17, 0.12, 0.41);
-      this.visual.add(eye);
+      this.placeholder.add(eye);
     }
 
     // Small orange energy core on the front
@@ -54,10 +60,34 @@ export class Player {
       })
     );
     core.position.set(0, -0.17, 0.41);
-    this.visual.add(core);
+    this.placeholder.add(core);
 
     scene.add(this.group);
     this.group.position.copy(this.position);
+
+    this.loadModel();
+  }
+
+  // Loads CUBIT's real model (GLB from Blender) and swaps it in for the placeholder box.
+  // The model's front faces +Z, the same as the placeholder, so nothing else needs to change.
+  loadModel() {
+    new GLTFLoader().load(
+      MODEL_URL,
+      (gltf) => {
+        // Remove the placeholder and free its memory
+        this.visual.remove(this.placeholder);
+        this.placeholder.traverse((object) => {
+          if (object.geometry) object.geometry.dispose();
+          if (object.material) object.material.dispose();
+        });
+
+        this.visual.add(gltf.scene);
+      },
+      undefined,
+      (error) => {
+        console.warn('Could not load CUBIT model, keeping the placeholder box.', error);
+      }
+    );
   }
 
   // forward = the direction "up the screen" on the ground (comes from the camera)
