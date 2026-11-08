@@ -89,6 +89,8 @@ const restartButton = document.getElementById('restart-button');
 let frames = 0;
 let fpsTimer = 0;
 
+let lastCollected = 0; // how many fragments were collected the last time the HUD refreshed
+
 // Refreshes everything the HUD shows about the current level
 function refreshHud() {
   const data = levels.data;
@@ -102,6 +104,7 @@ function refreshHud() {
   // Only show the abilities this level uses
   shiftIndicator.classList.toggle('hidden', (data.blocks ?? []).length === 0);
   rotateIndicator.classList.toggle('hidden', (data.structures ?? []).length === 0);
+  lastCollected = fragments.collectedCount;
 }
 refreshHud();
 
@@ -143,7 +146,15 @@ function setPaused(value) {
   pauseMenu.classList.toggle('visible', paused);
 }
 
+// Uses SHIFT or ROTATE. CUBIT plays the Interact animation only when the ability really works.
+function useAbility(kind) {
+  const target = levels.puzzles.findTarget(player, kind);
+  if (target && target.canActivate) player.play('Interact');
+  levels.puzzles.tryActivate(player, kind);
+}
+
 function restartLevel() {
+  player.celebrate(false);
   levels.restart();
   snapCamera();
   refreshHud();
@@ -169,19 +180,25 @@ function animate() {
 
   if (!paused) {
     // Abilities: SHIFT (Q) and ROTATE (R)
-    if (input.wasPressed('KeyQ')) levels.puzzles.tryActivate(player, 'shift');
-    if (input.wasPressed('KeyR')) levels.puzzles.tryActivate(player, 'rotate');
+    if (input.wasPressed('KeyQ')) useAbility('shift');
+    if (input.wasPressed('KeyR')) useAbility('rotate');
 
     // Restart the level (Backspace), or go on to the next one when finished (Enter)
     if (input.wasPressed('Backspace')) restartLevel();
     if (input.wasPressed('Enter') && levels.complete && levels.hasNext) {
+      player.celebrate(false);
       levels.next();
       snapCamera();
       refreshHud();
     }
 
     player.update(delta, elapsed, forward);
-    if (levels.update(delta, elapsed)) refreshHud();
+    if (levels.update(delta, elapsed)) {
+      // A fragment was collected and/or the level was completed
+      if (levels.fragments.collectedCount > lastCollected) player.play('Collect');
+      if (levels.complete) player.celebrate(true);
+      refreshHud();
+    }
     updatePrompt();
   }
 

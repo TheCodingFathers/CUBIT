@@ -12,6 +12,7 @@ const TURN_SPEED = 12; // how fast CUBIT turns to face its movement
 const FALL_LIMIT = -12; // below this height CUBIT respawns
 const START = new THREE.Vector3(0, 1.5, 0);
 const MODEL_URL = '/models/cubit.glb'; // made in Blender, lives in public/models/
+const BLEND_TIME = 0.2; // seconds to blend between animations
 
 // CUBIT's collision box is half this size in each direction (so 0.7 x 0.8 x 0.7)
 const HALF = { x: 0.35, y: 0.4, z: 0.35 };
@@ -25,7 +26,14 @@ export class Player {
     this.velocityY = 0;
     this.onGround = false;
 
-    // ---- Placeholder CUBIT model (the real Blender model comes later) ----
+    // Animation (filled in when the Blender model has loaded)
+    this.mixer = null;
+    this.actions = {}; // clip name -> AnimationAction (Idle, Walk, ...)
+    this.state = null; // name of the clip that is playing now
+    this.oneShot = null; // name of a one-shot clip (Interact, Collect) that is playing right now
+    this.celebrating = false; // true while the level is complete (Victory loops)
+
+    // ---- Placeholder CUBIT model (shown until the Blender model has loaded) ----
     this.group = new THREE.Group();
 
     this.visual = new THREE.Group(); // bobs up and down so CUBIT looks like it floats
@@ -82,12 +90,68 @@ export class Player {
         });
 
         this.visual.add(gltf.scene);
+
+        // Set up the animations that came with the model (Idle, Walk, ...)
+        if (gltf.animations.length > 0) {
+          this.mixer = new THREE.AnimationMixer(gltf.scene);
+          for (const clip of gltf.animations) {
+            this.actions[clip.name] = this.mixer.clipAction(clip);
+          }
+          // Jump plays once and holds its last pose until the next animation takes over
+          if (this.actions.Jump) {
+            this.actions.Jump.setLoop(THREE.LoopOnce, 1);
+            this.actions.Jump.clampWhenFinished = true;
+          }
+          // Interact and Collect play once, then control goes back to Idle / Walk / Jump / Fall
+          for (const name of ['Interact', 'Collect']) {
+            if (this.actions[name]) {
+              this.actions[name].setLoop(THREE.LoopOnce, 1);
+              this.actions[name].clampWhenFinished = false;
+            }
+          }
+          this.mixer.addEventListener('finished', (event) => {
+            if (this.oneShot && event.action === this.actions[this.oneShot]) this.oneShot = null;
+          });
+          this.setState('Idle');
+        }
       },
       undefined,
       (error) => {
         console.warn('Could not load CUBIT model, keeping the placeholder box.', error);
       }
     );
+  }
+
+  // Switches to another animation with a short blend. Does nothing if it is already playing
+  // or the model has no clip with that name.
+  setState(name) {
+    if (this.state === name || !this.actions[name]) return;
+
+    const next = this.actions[name];
+    const previous = this.actions[this.state];
+
+    next.reset().play();
+    if (previous) next.crossFadeFrom(previous, BLEND_TIME, false);
+    this.state = name;
+  }
+
+  // Plays a one-shot clip (Interact, Collect) on top of the normal animations.
+  // Does nothing if the model has no clip with that name.
+  play(name) {
+    const action = this.actions[name];
+    if (!action) return;
+    this.oneShot = name;
+    if (this.state === name) {
+      action.reset().play(); // same clip again: restart it
+    } else {
+      this.setState(name);
+    }
+  }
+
+  // Victory loops while the level is complete. celebrate(false) stops it.
+  celebrate(on) {
+    this.celebrating = on;
+    if (!on && this.state === 'Victory') this.setState('Idle');
   }
 
   // forward = the direction "up the screen" on the ground (comes from the camera)
@@ -126,7 +190,21 @@ export class Player {
 
     // ---- Update the visible model ----
     this.group.position.copy(this.position);
-    this.visual.position.y = 0.1 + Math.sin(elapsed * 3) * 0.04; // gentle floating
+
+    if (this.mixer) {
+      // The Blender model floats by itself (Idle and Walk clips)
+      this.visual.position.y = 0.1;
+      let wanted;
+      if (this.oneShot) wanted = this.oneShot; // Interact or Collect
+      else if (!this.onGround) wanted = this.velocityY > 0.5 ? 'Jump' : 'Fall'; // rising or falling
+      else if (move.lengthSq() > 0) wanted = 'Walk';
+      else wanted = this.celebrating ? 'Victory' : 'Idle';
+      this.setState(wanted);
+      this.mixer.update(delta);
+    } else {
+      // Placeholder box: fake the floating in code
+      this.visual.position.y = 0.1 + Math.sin(elapsed * 3) * 0.04;
+    }
 
     if (move.lengthSq() > 0) {
       const target = Math.atan2(move.x, move.z);
@@ -145,6 +223,7 @@ export class Player {
 
   // Put CUBIT back at the start
   reset() {
+    this.oneShot = null;
     this.position.copy(this.start);
     this.velocityY = 0;
     this.onGround = false;
