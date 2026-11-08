@@ -146,10 +146,25 @@ function setPaused(value) {
   pauseMenu.classList.toggle('visible', paused);
 }
 
+// Small message under the objective, shown for a moment (created here, styled in style.css)
+const notice = document.createElement('div');
+notice.id = 'notice';
+document.body.appendChild(notice);
+let noticeTimer = 0;
+
+function showNotice(text) {
+  notice.textContent = text;
+  notice.classList.add('visible');
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => notice.classList.remove('visible'), 1500);
+}
+
 // Uses SHIFT or ROTATE. CUBIT plays the Interact animation only when the ability really works.
+// If something is in range but cannot move right now, a message says so.
 function useAbility(kind) {
   const target = levels.puzzles.findTarget(player, kind);
   if (target && target.canActivate) player.play('Interact');
+  else if (target) showNotice('Something is in the way');
   levels.puzzles.tryActivate(player, kind);
 }
 

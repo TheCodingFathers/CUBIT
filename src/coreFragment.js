@@ -1,8 +1,21 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { COLORS } from './constants.js';
 
 const COLLECT_DISTANCE = 0.8; // how close CUBIT must get to pick one up
 const POP_DURATION = 0.25; // seconds of the little "pop" when collected
+const MODEL_URL = '/models/core_fragment.glb'; // made in Blender, lives in public/models/
+
+// The model is loaded once and every fragment gets its own clone of it
+let modelPromise = null;
+function loadFragmentModel() {
+  if (!modelPromise) {
+    modelPromise = new Promise((resolve, reject) => {
+      new GLTFLoader().load(MODEL_URL, (gltf) => resolve(gltf.scene), undefined, reject);
+    });
+  }
+  return modelPromise;
+}
 
 // A Core Fragment floats above a supporting cube.
 // supportCell = the [x, y, z] cube it floats above. CUBIT collects it by touching it.
@@ -16,11 +29,13 @@ export class CoreFragment {
     this.collected = false;
     this.popping = false;
     this.popTime = 0;
+    this.shards = null; // the little orbiting crystals (set when the model has loaded)
 
     this.group = new THREE.Group();
     this.group.position.copy(this.base);
 
-    // Bright orange core (orange = core energy and objectives)
+    // Placeholder: a bright orange cube, shown until the Blender model has loaded
+    // (and kept if loading fails)
     this.core = new THREE.Mesh(
       new THREE.BoxGeometry(0.35, 0.35, 0.35),
       new THREE.MeshStandardMaterial({
@@ -32,7 +47,7 @@ export class CoreFragment {
 
     // Soft see-through halo: a cheap glow without any post-processing
     this.halo = new THREE.Mesh(
-      new THREE.BoxGeometry(0.55, 0.55, 0.55),
+      new THREE.OctahedronGeometry(0.34, 0),
       new THREE.MeshBasicMaterial({
         color: COLORS.orange,
         transparent: true,
@@ -40,18 +55,40 @@ export class CoreFragment {
         depthWrite: false,
       })
     );
+    this.halo.scale.set(1, 1.5, 1); // stretched to match the diamond
 
     this.group.add(this.core, this.halo);
     scene.add(this.group);
+
+    this.loadModel();
+  }
+
+  // Swaps the placeholder cube for the real crystal (GLB from Blender)
+  loadModel() {
+    loadFragmentModel()
+      .then((source) => {
+        const model = source.clone(true); // shares geometry and materials, so it is cheap
+        this.group.remove(this.core);
+        this.core.geometry.dispose();
+        this.core.material.dispose();
+        this.group.add(model);
+        this.shards = model.getObjectByName('CoreFragment_Shards');
+      })
+      .catch((error) => {
+        console.warn('Could not load the Core Fragment model, keeping the placeholder cube.', error);
+      });
   }
 
   update(delta, elapsed) {
     if (this.collected && !this.popping) return;
 
-    // Spin and gently bob
+    // Spin upright, sway a little, and gently bob
     this.group.rotation.y = elapsed * 1.5;
-    this.group.rotation.x = elapsed * 0.7;
+    this.group.rotation.z = Math.sin(elapsed * 1.2) * 0.08;
     this.group.position.y = this.base.y + Math.sin(elapsed * 2) * 0.1;
+
+    // The little crystals circle the other way
+    if (this.shards) this.shards.rotation.y = -elapsed * 2.5;
 
     if (this.popping) {
       this.popTime += delta;
