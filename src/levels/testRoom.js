@@ -1,6 +1,7 @@
 // Level data: describes a level with plain numbers. No Three.js code in here.
 // Coordinates are grid cells [x, y, z]. One cube = 1 unit.
 //
+//   objective  the text shown in the HUD
 //   start      where CUBIT begins
 //   boxes      solid areas of cubes, filled from one corner to the opposite corner
 //   holes      single cells to leave empty inside a box
@@ -10,6 +11,7 @@
 
 export default {
   name: 'Test Room',
+  objective: 'Recover both Core Fragments',
   start: [0, 1.5, 0],
 
   boxes: [

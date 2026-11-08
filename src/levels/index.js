@@ -1,5 +1,6 @@
 // The list of levels, in play order.
-// To add a level: create a file like testRoom.js, import it here, and add it to LEVELS.
+// To add a level: create a file like level1.js, import it here, and add it to LEVELS.
+import level1 from './level1.js';
 import testRoom from './testRoom.js';
 
-export const LEVELS = [testRoom];
+export const LEVELS = [level1, testRoom];

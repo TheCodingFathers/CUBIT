@@ -72,27 +72,40 @@ window.addEventListener('resize', () => {
 });
 
 // ---------------------------------------------------------------
-// HUD
+// HUD elements
 // ---------------------------------------------------------------
 const clock = new THREE.Clock();
 const fpsLabel = document.getElementById('fps');
 const promptLabel = document.getElementById('prompt');
+const objectiveText = document.getElementById('objective-text');
 const fragmentCountLabel = document.getElementById('fragment-count');
 const completeScreen = document.getElementById('complete');
 const completeHint = document.getElementById('complete-hint');
+const shiftIndicator = document.getElementById('ability-shift');
+const rotateIndicator = document.getElementById('ability-rotate');
+const pauseMenu = document.getElementById('pause');
+const resumeButton = document.getElementById('resume-button');
+const restartButton = document.getElementById('restart-button');
 let frames = 0;
 let fpsTimer = 0;
 
-// Shows "collected / total" and the level-complete message
-function updateHud() {
+// Refreshes everything the HUD shows about the current level
+function refreshHud() {
+  const data = levels.data;
   const fragments = levels.fragments;
+
+  objectiveText.textContent = data.objective ?? '';
   fragmentCountLabel.textContent = `${fragments.collectedCount} / ${fragments.total}`;
   completeHint.textContent = levels.hasNext ? 'Enter for the next level' : 'Backspace to play again';
   completeScreen.classList.toggle('visible', levels.complete);
-}
-updateHud();
 
-// Builds the prompt text for the abilities that are in range right now
+  // Only show the abilities this level uses
+  shiftIndicator.classList.toggle('hidden', (data.blocks ?? []).length === 0);
+  rotateIndicator.classList.toggle('hidden', (data.structures ?? []).length === 0);
+}
+refreshHud();
+
+// Shows the prompt for abilities in range, and lights up the ability indicators
 function updatePrompt() {
   const parts = [];
   let anyAvailable = false;
@@ -102,12 +115,14 @@ function updatePrompt() {
     parts.push(shift.canActivate ? 'Q  SHIFT' : 'Q  SHIFT (blocked)');
     anyAvailable = anyAvailable || shift.canActivate;
   }
+  shiftIndicator.classList.toggle('ready', !!shift && shift.canActivate);
 
   const rotate = levels.puzzles.findTarget(player, 'rotate');
   if (rotate) {
     parts.push(rotate.canActivate ? 'R  ROTATE' : 'R  ROTATE (blocked)');
     anyAvailable = anyAvailable || rotate.canActivate;
   }
+  rotateIndicator.classList.toggle('ready', !!rotate && rotate.canActivate);
 
   if (parts.length === 0) {
     promptLabel.classList.remove('visible');
@@ -119,6 +134,28 @@ function updatePrompt() {
 }
 
 // ---------------------------------------------------------------
+// Pause menu: Esc toggles it. While paused the game stops updating.
+// ---------------------------------------------------------------
+let paused = false;
+
+function setPaused(value) {
+  paused = value;
+  pauseMenu.classList.toggle('visible', paused);
+}
+
+function restartLevel() {
+  levels.restart();
+  snapCamera();
+  refreshHud();
+}
+
+resumeButton.addEventListener('click', () => setPaused(false));
+restartButton.addEventListener('click', () => {
+  restartLevel();
+  setPaused(false);
+});
+
+// ---------------------------------------------------------------
 // Game loop: runs once per frame
 // ---------------------------------------------------------------
 function animate() {
@@ -128,25 +165,25 @@ function animate() {
   const delta = Math.min(rawDelta, 1 / 30); // cap it so a lag spike can't break collision
   const elapsed = clock.elapsedTime;
 
-  // Abilities: SHIFT (Q) and ROTATE (R)
-  if (input.wasPressed('KeyQ')) levels.puzzles.tryActivate(player, 'shift');
-  if (input.wasPressed('KeyR')) levels.puzzles.tryActivate(player, 'rotate');
+  if (input.wasPressed('Escape')) setPaused(!paused);
 
-  // Restart the level (Backspace), or go on to the next one when finished (Enter)
-  if (input.wasPressed('Backspace')) {
-    levels.restart();
-    snapCamera();
-    updateHud();
-  }
-  if (input.wasPressed('Enter') && levels.complete && levels.hasNext) {
-    levels.next();
-    snapCamera();
-    updateHud();
-  }
+  if (!paused) {
+    // Abilities: SHIFT (Q) and ROTATE (R)
+    if (input.wasPressed('KeyQ')) levels.puzzles.tryActivate(player, 'shift');
+    if (input.wasPressed('KeyR')) levels.puzzles.tryActivate(player, 'rotate');
 
-  player.update(delta, elapsed, forward);
-  if (levels.update(delta, elapsed)) updateHud();
-  updatePrompt();
+    // Restart the level (Backspace), or go on to the next one when finished (Enter)
+    if (input.wasPressed('Backspace')) restartLevel();
+    if (input.wasPressed('Enter') && levels.complete && levels.hasNext) {
+      levels.next();
+      snapCamera();
+      refreshHud();
+    }
+
+    player.update(delta, elapsed, forward);
+    if (levels.update(delta, elapsed)) refreshHud();
+    updatePrompt();
+  }
 
   // Smooth camera follow
   desiredCameraPosition.copy(player.position).add(CAMERA_OFFSET);
