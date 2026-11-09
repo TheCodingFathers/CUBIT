@@ -369,3 +369,30 @@ body {
   font-size: 12px;
   color: var(--cyan);
 }
+
+/* First-time hint: one short line under the objective and the notice */
+#hint {
+  position: fixed;
+  top: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(560px, 86vw);
+  padding: 8px 16px;
+  background: rgba(10, 18, 48, 0.9);
+  border: 1px solid var(--cyan);
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 1px;
+  text-align: center;
+  white-space: pre-line;
+  color: var(--cyan);
+  opacity: 0;
+  transition: opacity 0.4s;
+  pointer-events: none;
+  user-select: none;
+}
+
+#hint.visible {
+  opacity: 1;
+}

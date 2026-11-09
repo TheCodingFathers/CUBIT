@@ -5,6 +5,7 @@ import { input } from './input.js';
 import { Player } from './player.js';
 import { LevelManager } from './levelManager.js';
 import { CoreEcho, ECHO_MAX_SECONDS } from './echo.js';
+import { BlobShadow } from './blobShadow.js';
 import { LEVELS } from './levels/index.js';
 
 // ---------------------------------------------------------------
@@ -52,6 +53,7 @@ scene.add(sun);
 // CUBIT and the levels
 // ---------------------------------------------------------------
 const player = new Player(scene);
+const shadow = new BlobShadow(scene); // soft shadow under CUBIT: makes jumps and edges easier to judge
 const levels = new LevelManager(scene, player, LEVELS);
 levels.load(0);
 
@@ -260,6 +262,49 @@ function showNotice(text) {
   noticeTimer = setTimeout(() => notice.classList.remove('visible'), 1500);
 }
 
+// ---------------------------------------------------------------
+// First-time hints: one short line the first time a level uses a mechanic (once per page load)
+// ---------------------------------------------------------------
+const HINTS = [
+  {
+    id: 'echo',
+    when: (data) => !!data.echo,
+    text: 'Pressure plates open doors while something stands on them. Press E to record yourself, E again to finish: your copy repeats the run and can hold a plate for you.',
+  },
+  {
+    id: 'gravity',
+    when: (data) => !!data.gravity,
+    text: 'The arrow keys turn gravity toward that side. G reverses it, X puts it back to normal.',
+  },
+  {
+    id: 'circuit',
+    when: (data) => (data.circuit?.sources ?? []).length > 0,
+    text: 'The beam is energy. Mirrors bend it: stand near one and press R to turn it. A powered receiver opens its door.',
+  },
+];
+const hintsSeen = new Set();
+
+const hintBox = document.createElement('div');
+hintBox.id = 'hint';
+document.body.appendChild(hintBox);
+let hintTimer = 0;
+
+// Call right after a new level loads. Shows the hints of mechanics the player has not met yet.
+function showLevelHint() {
+  const lines = HINTS.filter((hint) => !hintsSeen.has(hint.id) && hint.when(levels.data)).map((hint) => {
+    hintsSeen.add(hint.id);
+    return hint.text;
+  });
+  clearTimeout(hintTimer);
+  if (lines.length === 0) {
+    hintBox.classList.remove('visible');
+    return;
+  }
+  hintBox.textContent = lines.join('\n');
+  hintBox.classList.add('visible');
+  hintTimer = setTimeout(() => hintBox.classList.remove('visible'), 10000);
+}
+
 // Uses SHIFT or ROTATE. CUBIT plays the Interact animation only when the ability really works.
 // If something is in range but cannot move right now, a message says so.
 function useAbility(kind) {
@@ -304,6 +349,7 @@ function goToLevel(index) {
   levels.load(index);
   snapCamera();
   refreshHud();
+  showLevelHint();
   setPaused(false);
   showNotice(levelTitle(index));
 }
@@ -392,9 +438,11 @@ function animate() {
       levels.next();
       snapCamera();
       refreshHud();
+      showLevelHint();
     }
 
     player.update(delta, elapsed, forward);
+    shadow.update(player, levels.level);
     echo.update(delta, elapsed); // after CUBIT has moved, so it records the new position
     if (levels.update(delta, elapsed, echo.actors)) {
       // A fragment was collected and/or the level was completed
