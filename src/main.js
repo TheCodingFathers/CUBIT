@@ -4,6 +4,7 @@ import { COLORS } from './constants.js';
 import { input } from './input.js';
 import { Player } from './player.js';
 import { LevelManager } from './levelManager.js';
+import { CoreEcho, ECHO_MAX_SECONDS } from './echo.js';
 import { LEVELS } from './levels/index.js';
 
 // ---------------------------------------------------------------
@@ -14,6 +15,11 @@ const PIXEL_RATIO_CAP = 1.5;
 // Where the camera sits relative to CUBIT (x, height, distance)
 const CAMERA_OFFSET = new THREE.Vector3(6, 7, 8);
 const CAMERA_FOLLOW_SPEED = 5; // higher = camera catches up faster
+
+// REVIEW TOOL: a level picker in the pause menu, so we can look back at any level.
+// It is NOT a game feature (a player must finish a level to unlock the next one).
+// Set this to false before release and the picker disappears completely.
+const REVIEW_LEVEL_SELECT = true;
 
 // ---------------------------------------------------------------
 // Renderer: draws the 3D world into a <canvas> inside #app
@@ -49,6 +55,11 @@ const player = new Player(scene);
 const levels = new LevelManager(scene, player, LEVELS);
 levels.load(0);
 
+// CORE ECHO: record a run, then a holographic copy replays it (E to record, C to cancel)
+const echo = new CoreEcho(scene, player);
+echo.onNotice = (text) => showNotice(text);
+echo.limit = () => levels.data.echoSeconds ?? ECHO_MAX_SECONDS; // a level can set echoSeconds
+
 // "Up the screen" on the ground = the direction the camera looks, flattened.
 // W/A/S/D move relative to this, so W always walks away from the camera.
 const forward = new THREE.Vector3(-CAMERA_OFFSET.x, 0, -CAMERA_OFFSET.z).normalize();
@@ -57,8 +68,15 @@ const desiredCameraPosition = new THREE.Vector3();
 const lookTarget = new THREE.Vector3();
 
 // Put the camera right behind CUBIT instantly (used when a level loads)
+// The camera sits behind CUBIT as seen from the surface it stands on (GRAVITY FLIP turns it around)
+const turnedOffset = new THREE.Vector3();
+function cameraOffset() {
+  return turnedOffset.copy(CAMERA_OFFSET).applyQuaternion(player.upQuat);
+}
+
 function snapCamera() {
-  camera.position.copy(player.position).add(CAMERA_OFFSET);
+  camera.up.set(0, 1, 0).applyQuaternion(player.upQuat);
+  camera.position.copy(player.position).add(cameraOffset());
 }
 snapCamera();
 
@@ -83,6 +101,8 @@ const completeScreen = document.getElementById('complete');
 const completeHint = document.getElementById('complete-hint');
 const shiftIndicator = document.getElementById('ability-shift');
 const rotateIndicator = document.getElementById('ability-rotate');
+const echoIndicator = document.getElementById('ability-echo');
+const echoStatus = document.getElementById('echo-status');
 const pauseMenu = document.getElementById('pause');
 const resumeButton = document.getElementById('resume-button');
 const restartButton = document.getElementById('restart-button');
@@ -102,8 +122,12 @@ function refreshHud() {
   completeScreen.classList.toggle('visible', levels.complete);
 
   // Only show the abilities this level uses
-  shiftIndicator.classList.toggle('hidden', (data.blocks ?? []).length === 0);
-  rotateIndicator.classList.toggle('hidden', (data.structures ?? []).length === 0);
+  shiftIndicator.classList.toggle(
+    'hidden',
+    (data.blocks ?? []).filter((block) => !(block.gravity && block.positions.length < 2)).length === 0
+  );
+  rotateIndicator.classList.toggle('hidden', (data.structures ?? []).length + (data.circuit?.reflectors ?? []).length === 0);
+  echoIndicator.classList.toggle('hidden', !data.echo);
   lastCollected = fragments.collectedCount;
 }
 refreshHud();
@@ -141,9 +165,86 @@ function updatePrompt() {
 // ---------------------------------------------------------------
 let paused = false;
 
+// Shows what CORE ECHO is doing right now (recording, replaying or holding)
+function updateEchoHud() {
+  const status = echo.status;
+  echoIndicator.classList.toggle('active', status !== null);
+  if (!levels.data.echo || status === null) {
+    echoStatus.classList.remove('visible', 'recording');
+    return;
+  }
+  if (status.kind === 'recording') {
+    echoStatus.textContent = `REC  ${status.time.toFixed(1)} / ${status.max.toFixed(0)} s     E finish   C cancel`;
+  } else {
+    const word = status.kind === 'holding' ? 'holding' : 'replaying';
+    echoStatus.textContent = `ECHO  ${word}     E new recording   C dismiss`;
+  }
+  echoStatus.classList.add('visible');
+  echoStatus.classList.toggle('recording', status.kind === 'recording');
+}
+
+// ---------------------------------------------------------------
+// GRAVITY FLIP: the gravity panel, and what the gravity keys call
+// ---------------------------------------------------------------
+const GRAVITY_NAMES = {
+  '0,-1,0': '\u25BC DOWN',
+  '0,1,0': '\u25B2 UP',
+  '-1,0,0': '\u25C0 WEST',
+  '1,0,0': '\u25B6 EAST',
+  '0,0,-1': 'NORTH',
+  '0,0,1': 'SOUTH',
+};
+
+const gravityPanel = document.createElement('div');
+gravityPanel.id = 'gravity-panel';
+gravityPanel.style.cssText = [
+  'position: fixed',
+  'left: 24px',
+  'top: 50%',
+  'transform: translateY(-50%)',
+  'padding: 10px 14px',
+  'background: rgba(10, 18, 48, 0.72)',
+  'border: 1px solid rgba(45, 226, 255, 0.7)',
+  'color: #2de2ff',
+  'line-height: 1.4',
+  'pointer-events: none',
+  'z-index: 5',
+  'display: none',
+].join(';');
+document.body.appendChild(gravityPanel);
+let gravityPanelName = '';
+
+function gravityName(g) {
+  return GRAVITY_NAMES[`${g.x},${g.y},${g.z}`] ?? '?';
+}
+
+// Shows the panel only in levels that use gravity, and the current direction in it
+function updateGravityHud() {
+  const on = !!levels.data.gravity;
+  gravityPanel.style.display = on ? 'block' : 'none';
+  if (!on) return;
+  const name = gravityName(player.gravity);
+  if (name === gravityPanelName) return;
+  gravityPanelName = name;
+  gravityPanel.innerHTML =
+    '<div style="font-size:11px;letter-spacing:0.25em;opacity:0.7">GRAVITY</div>' +
+    '<div style="font-size:22px;margin:4px 0">' + name + '</div>' +
+    '<div style="font-size:11px;opacity:0.7">ARROWS turn<br>G reverse<br>X floor</div>';
+}
+
+// how = 'forward' | 'back' | 'left' | 'right' | 'reverse' | 'floor'
+function turnGravity(how) {
+  const direction = player.gravityTarget(how);
+  if (player.setGravity(direction)) {
+    levels.puzzles.applyGravity(player.gravity, player); // gravity blocks fall too
+    showNotice(`Gravity ${gravityName(player.gravity)}`);
+  }
+}
+
 function setPaused(value) {
   paused = value;
   pauseMenu.classList.toggle('visible', paused);
+  if (paused) refreshLevelButtons();
 }
 
 // Small message under the objective, shown for a moment (created here, styled in style.css)
@@ -170,6 +271,7 @@ function useAbility(kind) {
 
 function restartLevel() {
   player.celebrate(false);
+  echo.reset();
   levels.restart();
   snapCamera();
   refreshHud();
@@ -180,6 +282,75 @@ restartButton.addEventListener('click', () => {
   restartLevel();
   setPaused(false);
 });
+
+// ---------------------------------------------------------------
+// REVIEW TOOL: level picker in the pause menu (see REVIEW_LEVEL_SELECT at the top)
+// ---------------------------------------------------------------
+const levelButtons = [];
+
+// "1", "2", ... "11", and "T" for the Test Room
+function levelLabel(index) {
+  return /test/i.test(LEVELS[index].name ?? '') ? 'T' : String(index + 1);
+}
+
+function levelTitle(index) {
+  const name = LEVELS[index].name ?? '';
+  return levelLabel(index) === 'T' ? name : `Level ${levelLabel(index)}: ${name}`;
+}
+
+function goToLevel(index) {
+  player.celebrate(false);
+  echo.reset();
+  levels.load(index);
+  snapCamera();
+  refreshHud();
+  setPaused(false);
+  showNotice(levelTitle(index));
+}
+
+// Marks the level you are in right now
+function refreshLevelButtons() {
+  levelButtons.forEach((button, index) => button.classList.toggle('current', index === levels.index));
+}
+
+function buildLevelSelect() {
+  const section = document.createElement('div');
+  section.id = 'level-select';
+
+  const title = document.createElement('div');
+  title.className = 'level-select-title';
+  title.textContent = 'LEVEL SELECT (review)';
+
+  const grid = document.createElement('div');
+  grid.className = 'level-grid';
+
+  const nameLabel = document.createElement('div');
+  nameLabel.className = 'level-select-name';
+  nameLabel.textContent = '\u00a0';
+
+  LEVELS.forEach((level, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'level-button';
+    button.textContent = levelLabel(index);
+    button.title = levelTitle(index);
+    const showName = () => (nameLabel.textContent = levelTitle(index));
+    button.addEventListener('mouseenter', showName);
+    button.addEventListener('focus', showName);
+    button.addEventListener('click', () => {
+      button.blur(); // so Space or Enter in the game never presses it again
+      goToLevel(index);
+    });
+    grid.appendChild(button);
+    levelButtons.push(button);
+  });
+  grid.addEventListener('mouseleave', () => (nameLabel.textContent = '\u00a0'));
+
+  section.append(title, grid, nameLabel);
+  pauseMenu.querySelector('.pause-hint').before(section);
+}
+
+if (REVIEW_LEVEL_SELECT) buildLevelSelect();
 
 // ---------------------------------------------------------------
 // Game loop: runs once per frame
@@ -198,30 +369,49 @@ function animate() {
     if (input.wasPressed('KeyQ')) useAbility('shift');
     if (input.wasPressed('KeyR')) useAbility('rotate');
 
+    // GRAVITY FLIP (levels with gravity: true): the arrow keys turn gravity toward that side as
+    // CUBIT sees it, G reverses it, X puts it back to normal
+    if (levels.data.gravity) {
+      if (input.wasPressed('ArrowUp')) turnGravity('forward');
+      if (input.wasPressed('ArrowDown')) turnGravity('back');
+      if (input.wasPressed('ArrowLeft')) turnGravity('left');
+      if (input.wasPressed('ArrowRight')) turnGravity('right');
+      if (input.wasPressed('KeyG')) turnGravity('reverse');
+      if (input.wasPressed('KeyX')) turnGravity('floor');
+    }
+    if (levels.data.echo) {
+      if (input.wasPressed('KeyE')) echo.toggle();
+      if (input.wasPressed('KeyC')) echo.cancel();
+    }
+
     // Restart the level (Backspace), or go on to the next one when finished (Enter)
     if (input.wasPressed('Backspace')) restartLevel();
     if (input.wasPressed('Enter') && levels.complete && levels.hasNext) {
       player.celebrate(false);
+      echo.reset();
       levels.next();
       snapCamera();
       refreshHud();
     }
 
     player.update(delta, elapsed, forward);
-    if (levels.update(delta, elapsed)) {
+    echo.update(delta, elapsed); // after CUBIT has moved, so it records the new position
+    if (levels.update(delta, elapsed, echo.actors)) {
       // A fragment was collected and/or the level was completed
       if (levels.fragments.collectedCount > lastCollected) player.play('Collect');
       if (levels.complete) player.celebrate(true);
       refreshHud();
     }
     updatePrompt();
+    updateEchoHud();
+    updateGravityHud();
   }
 
-  // Smooth camera follow
-  desiredCameraPosition.copy(player.position).add(CAMERA_OFFSET);
+  // Smooth camera follow (the view turns with gravity)
+  desiredCameraPosition.copy(player.position).add(cameraOffset());
   camera.position.lerp(desiredCameraPosition, 1 - Math.exp(-CAMERA_FOLLOW_SPEED * delta));
-  lookTarget.copy(player.position);
-  lookTarget.y += 0.3;
+  camera.up.set(0, 1, 0).applyQuaternion(player.upQuat);
+  lookTarget.copy(player.position).addScaledVector(camera.up, 0.3);
   camera.lookAt(lookTarget);
 
   renderer.render(scene, camera);

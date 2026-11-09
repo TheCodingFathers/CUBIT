@@ -5,27 +5,48 @@ import { input } from './input.js';
 
 // ---- Tuning values: change these to adjust how CUBIT feels ----
 const SPEED = 4; // walking speed (units per second)
-const JUMP_SPEED = 7.5; // upward speed at the start of a jump
+const JUMP_SPEED = 7.5; // speed away from the ground at the start of a jump
 const GRAVITY = 22; // how fast CUBIT falls
 const MAX_FALL_SPEED = 15;
 const TURN_SPEED = 12; // how fast CUBIT turns to face its movement
-const FALL_LIMIT = -12; // below this height CUBIT respawns
+const GRAVITY_TURN_SPEED = 8; // how fast the view and CUBIT's body swing around when gravity changes
+const WORLD_LIMIT = { below: -12, above: 30, side: 40 }; // farther than this from the level, CUBIT respawns
 const START = new THREE.Vector3(0, 1.5, 0);
 const MODEL_URL = '/models/cubit.glb'; // made in Blender, lives in public/models/
 const BLEND_TIME = 0.2; // seconds to blend between animations
 const LAND_MIN_SPEED = 5; // falling faster than this when touching ground plays the Land squash
 
-// CUBIT's collision box is half this size in each direction (so 0.7 x 0.8 x 0.7)
-const HALF = { x: 0.35, y: 0.4, z: 0.35 };
+// CUBIT's collision box is 0.7 x 0.8 x 0.7. The 0.8 side is its height, so it follows gravity.
+const HALF_HEIGHT = 0.4;
+const HALF_WIDTH = 0.35;
 const EPS = 0.0001;
+
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const DOWN = new THREE.Vector3(0, -1, 0);
+const DEFAULT_FORWARD = new THREE.Vector3(-0.6, 0, -0.8).normalize();
+
+// GRAVITY FLIP: gravity can point along any of the six world axes (down, up and four walls).
+// Everything CUBIT sees and every control is turned with it (see computeUpQuat), so on screen
+// CUBIT is always upright and W always walks "forward", whatever surface it stands on.
 
 export class Player {
   constructor(scene) {
     this.level = null; // set by setLevel() when a level is loaded
     this.start = START.clone(); // where CUBIT respawns in the current level
     this.position = START.clone(); // center of the collision box
-    this.velocityY = 0;
     this.onGround = false;
+
+    // ---- Gravity ----
+    this.gravity = DOWN.clone(); // direction CUBIT falls (always one of the six world axes)
+    this.gAxis = 'y'; // 'x', 'y' or 'z': the axis gravity is along
+    this.gSign = -1; // +1 or -1: which way along that axis
+    this.fallSpeed = 0; // speed along gravity (negative = moving away from the ground, e.g. a jump)
+    this.half = { x: HALF_WIDTH, y: HALF_HEIGHT, z: HALF_WIDTH }; // half size of the box
+    this.forwardBase = DEFAULT_FORWARD.clone(); // "up the screen" on a normal floor (set by main.js)
+    this.targetQuat = new THREE.Quaternion(); // the view turn that matches the current gravity
+    this.upQuat = new THREE.Quaternion(); // the same turn, smoothed: camera and body follow this
+    this.yaw = 0; // which way CUBIT faces, around its own up axis
+    this.yawQuat = new THREE.Quaternion();
 
     // Animation (filled in when the Blender model has loaded)
     this.mixer = null;
@@ -155,42 +176,159 @@ export class Player {
     if (!on && this.state === 'Victory') this.setState('Idle');
   }
 
-  // forward = the direction "up the screen" on the ground (comes from the camera)
+  // ---- GRAVITY FLIP ----
+
+  // The turn that takes the normal floor view (up = +Y, forward = forwardBase) to the view for
+  // the current gravity (up = away from gravity). The camera, the controls and CUBIT's body all
+  // use it, so the world is simply "rolled" until CUBIT's surface is below it again.
+  computeUpQuat() {
+    const forward = this.forwardBase;
+    const up = this.gravity.clone().negate();
+
+    // Forward on the new surface = the old forward, flattened onto it
+    const f = forward.clone().addScaledVector(up, -forward.dot(up));
+    if (f.lengthSq() < 1e-6) f.copy(forward);
+    f.normalize();
+
+    const right = new THREE.Vector3().crossVectors(f, up);
+    const standardRight = new THREE.Vector3().crossVectors(forward, WORLD_UP);
+    const standard = new THREE.Matrix4().makeBasis(standardRight, WORLD_UP, forward.clone().negate());
+    const turned = new THREE.Matrix4().makeBasis(right, up, f.clone().negate());
+    return new THREE.Quaternion().setFromRotationMatrix(turned.multiply(standard.invert()));
+  }
+
+  // Turns gravity toward a world axis (a vector like (0, 1, 0) or (-1, 0, 0)).
+  // snap = true switches instantly with no swing (used on respawn). Returns true if it changed.
+  setGravity(direction, snap = false) {
+    const g = new THREE.Vector3(Math.round(direction.x), Math.round(direction.y), Math.round(direction.z));
+    if (g.lengthSq() !== 1) return false;
+    if (!snap && g.equals(this.gravity)) return false;
+
+    this.gravity.copy(g);
+    this.gAxis = g.x !== 0 ? 'x' : g.y !== 0 ? 'y' : 'z';
+    this.gSign = g[this.gAxis];
+    this.half = { x: HALF_WIDTH, y: HALF_WIDTH, z: HALF_WIDTH };
+    this.half[this.gAxis] = HALF_HEIGHT;
+
+    this.targetQuat.copy(this.computeUpQuat());
+    if (snap) this.upQuat.copy(this.targetQuat);
+
+    this.fallSpeed = 0;
+    this.onGround = false;
+    this.pushOutOfWalls();
+    return true;
+  }
+
+  // Which gravity does a key ask for? how = 'forward' | 'back' | 'left' | 'right' | 'reverse' | 'floor'.
+  // The four sides are relative to what CUBIT sees: 'forward' is where W leads. They snap to the
+  // nearest world axis. Returns a world axis vector.
+  gravityTarget(how) {
+    const up = this.gravity.clone().negate();
+    const f = this.forwardBase.clone().applyQuaternion(this.targetQuat);
+    const right = new THREE.Vector3().crossVectors(f, up);
+
+    let v;
+    if (how === 'forward') v = f;
+    else if (how === 'back') v = f.negate();
+    else if (how === 'right') v = right;
+    else if (how === 'left') v = right.negate();
+    else if (how === 'reverse') v = this.gravity.clone().negate();
+    else v = DOWN.clone();
+
+    const ax = Math.abs(v.x);
+    const ay = Math.abs(v.y);
+    const az = Math.abs(v.z);
+    if (ax >= ay && ax >= az) return new THREE.Vector3(Math.sign(v.x), 0, 0);
+    if (ay >= az) return new THREE.Vector3(0, Math.sign(v.y), 0);
+    return new THREE.Vector3(0, 0, Math.sign(v.z));
+  }
+
+  // After the box changed shape, make sure it is not stuck inside a cube
+  pushOutOfWalls() {
+    if (!this.level || !this.hitsSolid()) return;
+    const axis = this.gAxis;
+    const start = this.position[axis];
+    for (const offset of [0.06, -0.06, 0.12, -0.12]) {
+      this.position[axis] = start + offset;
+      if (!this.hitsSolid()) return;
+    }
+    this.position[axis] = start;
+  }
+
+  // Is CUBIT's box overlapping any solid cube right now?
+  hitsSolid() {
+    const p = this.position;
+    const h = this.half;
+    const x0 = Math.floor(p.x - h.x + EPS + 0.5);
+    const x1 = Math.floor(p.x + h.x - EPS + 0.5);
+    const y0 = Math.floor(p.y - h.y + EPS + 0.5);
+    const y1 = Math.floor(p.y + h.y - EPS + 0.5);
+    const z0 = Math.floor(p.z - h.z + EPS + 0.5);
+    const z1 = Math.floor(p.z + h.z - EPS + 0.5);
+    for (let x = x0; x <= x1; x++) {
+      for (let y = y0; y <= y1; y++) {
+        for (let z = z0; z <= z1; z++) {
+          if (this.level.isSolid(x, y, z)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // forward = the direction "up the screen" on a normal floor (comes from the camera)
   update(delta, elapsed, forward) {
-    const right = new THREE.Vector3(-forward.z, 0, forward.x);
+    // If the camera direction is ever different, rebuild the gravity turn from it
+    if (!forward.equals(this.forwardBase)) {
+      this.forwardBase.copy(forward);
+      this.targetQuat.copy(this.computeUpQuat());
+    }
+
+    // The walking directions on the current surface: forward and right, turned with gravity
+    const up = this.gravity.clone().negate();
+    const walkForward = forward.clone().applyQuaternion(this.targetQuat);
+    const walkRight = new THREE.Vector3().crossVectors(walkForward, up);
 
     // ---- Read the keys ----
     const move = new THREE.Vector3();
-    if (input.isDown('KeyW')) move.add(forward);
-    if (input.isDown('KeyS')) move.sub(forward);
-    if (input.isDown('KeyD')) move.add(right);
-    if (input.isDown('KeyA')) move.sub(right);
+    if (input.isDown('KeyW')) move.add(walkForward);
+    if (input.isDown('KeyS')) move.sub(walkForward);
+    if (input.isDown('KeyD')) move.add(walkRight);
+    if (input.isDown('KeyA')) move.sub(walkRight);
+    move[this.gAxis] = 0; // never walk into or out of the surface
     if (move.lengthSq() > 0) move.normalize();
 
     // ---- Jump and gravity ----
     if (input.wasPressed('Space') && this.onGround) {
-      this.velocityY = JUMP_SPEED;
+      this.fallSpeed = -JUMP_SPEED;
     }
-    this.velocityY = Math.max(this.velocityY - GRAVITY * delta, -MAX_FALL_SPEED);
+    this.fallSpeed = Math.min(this.fallSpeed + GRAVITY * delta, MAX_FALL_SPEED);
 
     // ---- Move one axis at a time so CUBIT slides along walls ----
-    this.moveAxis('x', move.x * SPEED * delta);
-    this.moveAxis('z', move.z * SPEED * delta);
+    // The two axes along the surface first, then the gravity axis last.
+    for (const axis of ['x', 'y', 'z']) {
+      if (axis !== this.gAxis) this.moveAxis(axis, move[axis] * SPEED * delta);
+    }
 
     const wasOnGround = this.onGround;
     this.onGround = false;
-    const hitY = this.moveAxis('y', this.velocityY * delta);
-    if (hitY) {
-      if (this.velocityY < 0) {
+    const hitG = this.moveAxis(this.gAxis, this.gSign * this.fallSpeed * delta);
+    if (hitG) {
+      if (this.fallSpeed > 0) {
         this.onGround = true; // landed on something
         // A real landing (not just standing) plays the squash, unless another one-shot is playing
-        if (!wasOnGround && this.velocityY < -LAND_MIN_SPEED && !this.oneShot) this.play('Land');
+        if (!wasOnGround && this.fallSpeed > LAND_MIN_SPEED && !this.oneShot) this.play('Land');
       }
-      this.velocityY = 0; // landed, or bumped a ceiling
+      this.fallSpeed = 0; // landed, or bumped something above
     }
 
     // ---- Respawn if CUBIT falls off the world ----
-    if (this.position.y < FALL_LIMIT) {
+    const p = this.position;
+    if (
+      p.y < WORLD_LIMIT.below ||
+      p.y > WORLD_LIMIT.above ||
+      Math.abs(p.x) > WORLD_LIMIT.side ||
+      Math.abs(p.z) > WORLD_LIMIT.side
+    ) {
       this.reset();
     }
 
@@ -202,7 +340,7 @@ export class Player {
       this.visual.position.y = 0.1;
       let wanted;
       if (this.oneShot) wanted = this.oneShot; // Interact or Collect
-      else if (!this.onGround) wanted = this.velocityY > 0.5 ? 'Jump' : 'Fall'; // rising or falling
+      else if (!this.onGround) wanted = this.fallSpeed < -0.5 ? 'Jump' : 'Fall'; // rising or falling
       else if (move.lengthSq() > 0) wanted = 'Walk';
       else wanted = this.celebrating ? 'Victory' : 'Idle';
       this.setState(wanted);
@@ -212,13 +350,18 @@ export class Player {
       this.visual.position.y = 0.1 + Math.sin(elapsed * 3) * 0.04;
     }
 
+    // Turn to face the walking direction (measured on CUBIT's own surface)
     if (move.lengthSq() > 0) {
-      const target = Math.atan2(move.x, move.z);
-      const diff =
-        THREE.MathUtils.euclideanModulo(target - this.group.rotation.y + Math.PI, Math.PI * 2) -
-        Math.PI;
-      this.group.rotation.y += diff * Math.min(1, TURN_SPEED * delta);
+      const local = move.clone().applyQuaternion(this.targetQuat.clone().invert());
+      const target = Math.atan2(local.x, local.z);
+      const diff = THREE.MathUtils.euclideanModulo(target - this.yaw + Math.PI, Math.PI * 2) - Math.PI;
+      this.yaw += diff * Math.min(1, TURN_SPEED * delta);
     }
+
+    // Swing the body (and the camera, which reads upQuat) toward the current gravity
+    this.upQuat.slerp(this.targetQuat, 1 - Math.exp(-GRAVITY_TURN_SPEED * delta));
+    this.yawQuat.setFromAxisAngle(WORLD_UP, this.yaw);
+    this.group.quaternion.copy(this.upQuat).multiply(this.yawQuat);
   }
 
   // Called by the LevelManager when a new level is loaded
@@ -227,22 +370,23 @@ export class Player {
     this.start.set(...startCell);
   }
 
-  // Put CUBIT back at the start
+  // Put CUBIT back at the start (and gravity back to normal)
   reset() {
     this.oneShot = null;
     this.position.copy(this.start);
-    this.velocityY = 0;
+    this.fallSpeed = 0;
     this.onGround = false;
+    this.setGravity(DOWN, true);
   }
 
   // Is CUBIT's box overlapping the grid cell (x, y, z)?
   // topMargin extends the cell upward, so "standing on top of it" also counts.
   overlapsCell(x, y, z, topMargin = 0) {
     const p = this.position;
-    const overlapX = Math.abs(p.x - x) < HALF.x + 0.5 - EPS;
-    const overlapZ = Math.abs(p.z - z) < HALF.z + 0.5 - EPS;
-    const overlapY =
-      p.y + HALF.y > y - 0.5 + EPS && p.y - HALF.y < y + 0.5 + topMargin - EPS;
+    const h = this.half;
+    const overlapX = Math.abs(p.x - x) < h.x + 0.5 - EPS;
+    const overlapZ = Math.abs(p.z - z) < h.z + 0.5 - EPS;
+    const overlapY = p.y + h.y > y - 0.5 + EPS && p.y - h.y < y + 0.5 + topMargin - EPS;
     return overlapX && overlapZ && overlapY;
   }
 
@@ -252,15 +396,16 @@ export class Player {
     if (amount === 0) return false;
 
     const p = this.position;
+    const h = this.half;
     p[axis] += amount;
 
     // Which grid cells does CUBIT's box overlap? (cell i covers i-0.5 to i+0.5)
-    const x0 = Math.floor(p.x - HALF.x + EPS + 0.5);
-    const x1 = Math.floor(p.x + HALF.x - EPS + 0.5);
-    const y0 = Math.floor(p.y - HALF.y + EPS + 0.5);
-    const y1 = Math.floor(p.y + HALF.y - EPS + 0.5);
-    const z0 = Math.floor(p.z - HALF.z + EPS + 0.5);
-    const z1 = Math.floor(p.z + HALF.z - EPS + 0.5);
+    const x0 = Math.floor(p.x - h.x + EPS + 0.5);
+    const x1 = Math.floor(p.x + h.x - EPS + 0.5);
+    const y0 = Math.floor(p.y - h.y + EPS + 0.5);
+    const y1 = Math.floor(p.y + h.y - EPS + 0.5);
+    const z0 = Math.floor(p.z - h.z + EPS + 0.5);
+    const z1 = Math.floor(p.z + h.z - EPS + 0.5);
 
     let hit = false;
     for (let x = x0; x <= x1; x++) {
@@ -270,9 +415,9 @@ export class Player {
           hit = true;
           const cellCenter = { x, y, z }[axis];
           if (amount > 0) {
-            p[axis] = Math.min(p[axis], cellCenter - 0.5 - HALF[axis]);
+            p[axis] = Math.min(p[axis], cellCenter - 0.5 - h[axis]);
           } else {
-            p[axis] = Math.max(p[axis], cellCenter + 0.5 + HALF[axis]);
+            p[axis] = Math.max(p[axis], cellCenter + 0.5 + h[axis]);
           }
         }
       }

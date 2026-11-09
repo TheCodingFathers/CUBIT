@@ -277,3 +277,95 @@ body {
 #notice.visible {
   opacity: 1;
 }
+
+/* CORE ECHO: status panel (above the interaction prompt) */
+#echo-status {
+  position: fixed;
+  bottom: 92px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 16px;
+  background: rgba(10, 18, 48, 0.85);
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  font-family: monospace;
+  font-size: 14px;
+  letter-spacing: 2px;
+  white-space: pre;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+  user-select: none;
+}
+
+#echo-status.visible {
+  opacity: 1;
+}
+
+/* The border blinks while recording */
+#echo-status.recording {
+  animation: echo-blink 1s steps(2, start) infinite;
+}
+
+@keyframes echo-blink {
+  50% {
+    border-color: transparent;
+  }
+}
+
+/* The ECHO ability indicator lights up while an Echo is recording or active */
+#ability-echo.active {
+  color: var(--cyan);
+  border-color: var(--cyan);
+  box-shadow: 0 0 10px var(--cyan);
+}
+
+/* REVIEW TOOL: level picker inside the pause menu (not a game feature) */
+#pause .pause-panel {
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+#level-select {
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid #34406a;
+}
+
+#level-select .level-select-title {
+  margin-bottom: 10px;
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: #6f7fa8;
+}
+
+#level-select .level-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+#pause .level-button {
+  padding: 8px 0;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+/* The level you are in right now */
+#pause .level-button.current {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+
+#pause .level-button.current:hover,
+#pause .level-button.current:focus-visible {
+  background: var(--orange);
+  color: var(--navy);
+}
+
+#level-select .level-select-name {
+  margin-top: 10px;
+  min-height: 16px;
+  font-size: 12px;
+  color: var(--cyan);
+}

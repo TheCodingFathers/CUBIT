@@ -4,6 +4,8 @@ import { ShiftableBlock } from './shiftableBlock.js';
 import { RotatableStructure } from './rotatableStructure.js';
 import { CoreFragment, FragmentManager } from './coreFragment.js';
 import { PuzzleManager } from './puzzleManager.js';
+import { MechanismManager } from './mechanisms.js';
+import { CircuitManager } from './circuit.js';
 
 // Loads, restarts and unloads levels.
 // Everything a level creates goes into ONE group, so unloading is simple:
@@ -19,6 +21,8 @@ export class LevelManager {
     this.level = null;
     this.puzzles = null;
     this.fragments = null;
+    this.mechanisms = null;
+    this.circuit = null;
   }
 
   get data() {
@@ -47,11 +51,18 @@ export class LevelManager {
     // Things CUBIT can change
     this.puzzles = new PuzzleManager();
     for (const block of data.blocks ?? []) {
-      this.puzzles.add(new ShiftableBlock(this.group, this.level, block.positions));
+      this.puzzles.add(new ShiftableBlock(this.group, this.level, block.positions, 0, { gravity: !!block.gravity }));
     }
     for (const structure of data.structures ?? []) {
       this.puzzles.add(new RotatableStructure(this.group, this.level, structure));
     }
+
+    // CORE CIRCUIT: energy sources, mirrors (turned with ROTATE) and receivers
+    this.circuit = new CircuitManager(this.group, this.level, data);
+    for (const reflector of this.circuit.reflectors) this.puzzles.add(reflector);
+
+    // Pressure plates and energy doors
+    this.mechanisms = new MechanismManager(this.group, this.level, data);
 
     // Collectibles
     this.fragments = new FragmentManager();
@@ -90,11 +101,16 @@ export class LevelManager {
     this.level = null;
     this.puzzles = null;
     this.fragments = null;
+    this.mechanisms = null;
+    this.circuit = null;
   }
 
   // Returns true if CUBIT collected a fragment this frame
-  update(delta, elapsed) {
+  // extraActors = other things that can press plates (the Echo)
+  update(delta, elapsed, extraActors = []) {
     this.puzzles.update(delta);
+    const receivers = this.circuit.update(delta, elapsed);
+    this.mechanisms.update(delta, elapsed, [this.player, ...extraActors], receivers);
     return this.fragments.update(delta, elapsed, this.player);
   }
 }

@@ -1,0 +1,332 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { COLORS } from './constants.js';
+
+// CORE ECHO: CUBIT records a short run, then a holographic copy of itself (the Echo) replays it.
+//
+//   E  starts a recording, E again finishes it and creates the Echo
+//   C  cancels a recording, or dismisses the Echo
+//
+// The Echo is intangible: it never blocks anything. It only matters to mechanisms such as
+// pressure plates. When its recording ends it holds its last pose until it is dismissed or
+// replaced by a new Echo. There is only ever one Echo.
+
+// ---- Tuning values: change these to adjust CORE ECHO ----
+export const ECHO_MAX_SECONDS = 8; // longest possible recording
+const MIN_RECORD_SECONDS = 0.5; // shorter recordings are thrown away
+const RESPAWN_JUMP = 2.5; // moving farther than this in one frame means CUBIT respawned
+const MODEL_URL = '/models/cubit.glb'; // the Echo wears CUBIT's own model
+const BLEND_TIME = 0.2; // seconds to blend between animations
+
+// The same collision box as CUBIT, so plates and doors treat both the same way
+const HALF = { x: 0.35, y: 0.4, z: 0.35 };
+const EPS = 0.0001;
+
+export class CoreEcho {
+  constructor(scene, player) {
+    this.player = player;
+    this.onNotice = null; // main.js sets this to show small messages on screen
+    this.limit = () => ECHO_MAX_SECONDS; // main.js replaces this so a level can allow a longer recording
+
+    // ---- Recording ----
+    this.recording = false;
+    this.samples = []; // { t, x, y, z, ry, moving, grounded } once per frame
+    this.recordTime = 0;
+
+    // ---- The Echo ----
+    this.active = false; // is there an Echo in the world right now?
+    this.track = []; // the finished recording that is being replayed
+    this.cursor = 0;
+    this.playTime = 0;
+    this.finished = false; // true once the replay reached its end (the Echo then holds still)
+    this.position = new THREE.Vector3(); // center of its box, like CUBIT's
+    this.ry = 0;
+    this.moving = false;
+    this.grounded = true;
+    this.rising = false;
+
+    // ---- Look: a see-through cyan hologram ----
+    this.material = new THREE.MeshBasicMaterial({
+      color: COLORS.cyan,
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color: COLORS.cyan,
+      transparent: true,
+      opacity: 0.7,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    });
+
+    this.group = new THREE.Group();
+    this.group.visible = false;
+    scene.add(this.group);
+
+    this.visual = new THREE.Group();
+    this.visual.position.y = 0.1; // CUBIT floats a little above its collision box
+    this.group.add(this.visual);
+
+    // Placeholder box: shown until CUBIT's model has loaded (and kept if loading fails)
+    this.placeholder = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), this.material);
+    this.visual.add(this.placeholder);
+
+    // Hologram projector ring on the floor under the Echo
+    const floorRing = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.5, 32), ringMaterial);
+    floorRing.rotation.x = -Math.PI / 2;
+    floorRing.position.y = -0.38;
+    this.group.add(floorRing);
+
+    // A pulsing ring under CUBIT while it is recording
+    this.recRing = new THREE.Mesh(new THREE.RingGeometry(0.46, 0.54, 32), ringMaterial);
+    this.recRing.rotation.x = -Math.PI / 2;
+    this.recRing.visible = false;
+    scene.add(this.recRing);
+
+    // Animation (filled in when the model has loaded)
+    this.mixer = null;
+    this.actions = {};
+    this.animName = null;
+
+    this.loadModel();
+  }
+
+  // Loads CUBIT's model and swaps it in for the placeholder, drawn as a hologram
+  loadModel() {
+    new GLTFLoader().load(
+      MODEL_URL,
+      (gltf) => {
+        this.visual.remove(this.placeholder);
+        this.placeholder.geometry.dispose();
+
+        gltf.scene.traverse((object) => {
+          if (object.isMesh) object.material = this.material;
+        });
+        this.visual.add(gltf.scene);
+
+        if (gltf.animations.length > 0) {
+          this.mixer = new THREE.AnimationMixer(gltf.scene);
+          for (const clip of gltf.animations) {
+            this.actions[clip.name] = this.mixer.clipAction(clip);
+          }
+          if (this.actions.Jump) {
+            this.actions.Jump.setLoop(THREE.LoopOnce, 1);
+            this.actions.Jump.clampWhenFinished = true;
+          }
+          this.setAnimation('Idle');
+        }
+      },
+      undefined,
+      (error) => {
+        console.warn('Could not load the Echo model, keeping the placeholder box.', error);
+      }
+    );
+  }
+
+  setAnimation(name) {
+    if (this.animName === name || !this.actions[name]) return;
+    const next = this.actions[name];
+    const previous = this.actions[this.animName];
+    next.reset().play();
+    if (previous) next.crossFadeFrom(previous, BLEND_TIME, false);
+    this.animName = name;
+  }
+
+  say(text) {
+    if (this.onNotice) this.onNotice(text);
+  }
+
+  // The things that can stand on plates: just the Echo (CUBIT is added by the LevelManager)
+  get actors() {
+    return this.active ? [this] : [];
+  }
+
+  // What the HUD should show, or null when CORE ECHO is idle
+  get status() {
+    if (this.recording) return { kind: 'recording', time: this.recordTime, max: this.limit() };
+    if (this.active) return { kind: this.finished ? 'holding' : 'replaying' };
+    return null;
+  }
+
+  // ---- Controls ----
+
+  // E: start recording, or finish the recording that is running
+  toggle() {
+    if (this.recording) this.finishRecording();
+    else this.startRecording();
+  }
+
+  // C: cancel the recording, or dismiss the Echo
+  cancel() {
+    if (this.recording) {
+      this.cancelRecording('Recording cancelled');
+    } else if (this.active) {
+      this.active = false;
+      this.group.visible = false;
+      this.say('Echo dismissed');
+    }
+  }
+
+  // Removes everything (used when a level is loaded or restarted)
+  reset() {
+    this.recording = false;
+    this.samples = [];
+    this.active = false;
+    this.track = [];
+    this.group.visible = false;
+    this.recRing.visible = false;
+  }
+
+  // ---- Recording ----
+
+  startRecording() {
+    this.recording = true;
+    this.samples = [];
+    this.recordTime = 0;
+    this.addSample(0, false);
+  }
+
+  addSample(t, moving) {
+    const p = this.player.position;
+    this.samples.push({
+      t,
+      x: p.x,
+      y: p.y,
+      z: p.z,
+      ry: this.player.yaw,
+      q: this.player.upQuat.toArray(), // which surface CUBIT stood on (GRAVITY FLIP)
+      moving,
+      grounded: this.player.onGround,
+    });
+  }
+
+  record(delta) {
+    const last = this.samples[this.samples.length - 1];
+    const p = this.player.position;
+    const dx = p.x - last.x;
+    const dy = p.y - last.y;
+    const dz = p.z - last.z;
+
+    // CUBIT respawned (fell off the world): the recording no longer makes sense
+    if (Math.hypot(dx, dy, dz) > RESPAWN_JUMP) {
+      this.cancelRecording('Recording lost');
+      return;
+    }
+
+    this.recordTime += delta;
+    const moving = Math.hypot(dx, dz) / Math.max(delta, 0.0001) > 0.5;
+    this.addSample(this.recordTime, moving);
+
+    if (this.recordTime >= this.limit()) this.finishRecording();
+  }
+
+  cancelRecording(message) {
+    this.recording = false;
+    this.samples = [];
+    this.say(message);
+  }
+
+  // Turns the recording into an Echo (replacing the old Echo, if there was one)
+  finishRecording() {
+    this.recording = false;
+    if (this.recordTime < MIN_RECORD_SECONDS) {
+      this.samples = [];
+      this.say('Recording too short');
+      return;
+    }
+
+    this.track = this.samples;
+    this.samples = [];
+    this.cursor = 0;
+    this.playTime = 0;
+    this.finished = false;
+    this.active = true;
+
+    const first = this.track[0];
+    this.position.set(first.x, first.y, first.z);
+    this.ry = first.ry;
+    this.group.visible = true;
+    this.say('Echo created');
+  }
+
+  // ---- Replay ----
+
+  play(delta) {
+    const track = this.track;
+    const last = track[track.length - 1];
+
+    if (!this.finished) {
+      this.playTime += delta;
+      if (this.playTime >= last.t) {
+        this.playTime = last.t;
+        this.finished = true;
+      }
+    }
+
+    while (this.cursor + 1 < track.length && track[this.cursor + 1].t <= this.playTime) {
+      this.cursor++;
+    }
+    const a = track[this.cursor];
+    const b = track[Math.min(this.cursor + 1, track.length - 1)];
+    const k = b.t > a.t ? THREE.MathUtils.clamp((this.playTime - a.t) / (b.t - a.t), 0, 1) : 0;
+
+    this.position.set(
+      THREE.MathUtils.lerp(a.x, b.x, k),
+      THREE.MathUtils.lerp(a.y, b.y, k),
+      THREE.MathUtils.lerp(a.z, b.z, k)
+    );
+    const turn = THREE.MathUtils.euclideanModulo(b.ry - a.ry + Math.PI, Math.PI * 2) - Math.PI;
+    this.ry = a.ry + turn * k;
+
+    this.moving = !this.finished && a.moving;
+    this.grounded = a.grounded;
+    this.rising = b.y > a.y + 0.0001;
+  }
+
+  // Called once per frame, after CUBIT has moved
+  update(delta, elapsed) {
+    if (this.recording) this.record(delta);
+    if (this.active) this.play(delta);
+
+    // Pulsing ring under CUBIT while recording
+    this.recRing.visible = this.recording;
+    if (this.recording) {
+      const p = this.player.position;
+      this.recRing.position.set(p.x, p.y - 0.38, p.z);
+      this.recRing.scale.setScalar(1 + 0.12 * Math.sin(elapsed * 8));
+    }
+
+    if (!this.active) return;
+
+    this.group.position.copy(this.position);
+    // Face the way CUBIT faced, on the surface it stood on (GRAVITY FLIP can turn CUBIT around)
+    this.yawQuat = this.yawQuat ?? new THREE.Quaternion();
+    this.upQuat = this.upQuat ?? new THREE.Quaternion();
+    this.yawQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.ry);
+    const sampleQuat = this.track[this.cursor]?.q;
+    if (sampleQuat) this.upQuat.fromArray(sampleQuat);
+    else this.upQuat.identity();
+    this.group.quaternion.copy(this.upQuat).multiply(this.yawQuat);
+    this.material.opacity = 0.36 + 0.08 * Math.sin(elapsed * 9); // slight hologram flicker
+
+    if (this.mixer) {
+      let wanted;
+      if (!this.grounded) wanted = this.rising ? 'Jump' : 'Fall';
+      else wanted = this.moving ? 'Walk' : 'Idle';
+      this.setAnimation(wanted);
+      this.mixer.update(delta);
+    }
+  }
+
+  // Is the Echo's box overlapping the grid cell (x, y, z)? Same rule as CUBIT's.
+  overlapsCell(x, y, z, topMargin = 0) {
+    const p = this.position;
+    const overlapX = Math.abs(p.x - x) < HALF.x + 0.5 - EPS;
+    const overlapZ = Math.abs(p.z - z) < HALF.z + 0.5 - EPS;
+    const overlapY = p.y + HALF.y > y - 0.5 + EPS && p.y - HALF.y < y + 0.5 + topMargin - EPS;
+    return overlapX && overlapZ && overlapY;
+  }
+}

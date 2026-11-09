@@ -6,7 +6,8 @@ const pressed = new Set(); // keys that went down during this frame
 
 window.addEventListener('keydown', (event) => {
   // Stop the page from scrolling (Space) or going back (Backspace in some browsers)
-  if (event.code === 'Space' || event.code === 'Backspace') event.preventDefault();
+  const blocked = ['Space', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+  if (blocked.includes(event.code)) event.preventDefault();
   if (!event.repeat) pressed.add(event.code);
   down.add(event.code);
 });

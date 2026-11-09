@@ -12,10 +12,11 @@ const cellKey = (x, y, z) => `${x},${y},${z}`;
 // Made in Blender, live in public/models/
 const FLOOR_TILE_URL = '/models/platform_tile_v2_concept.glb'; // the TOP cube of every stack = the floor
 const BASE_BLOCK_URL = '/models/base_block.glb'; // every cube BELOW the top one
+const CORE_PLATFORM_URL = '/models/core_fragment_platform.glb'; // the cube under each Core Fragment
 
 // Each model is loaded once and reused by every level
 const modelPromises = new Map();
-function loadModel(url) {
+export function loadModel(url) {
   if (!modelPromises.has(url)) {
     const promise = new Promise((resolve, reject) => {
       new GLTFLoader().load(url, (gltf) => resolve(gltf.scene), undefined, reject);
@@ -33,6 +34,7 @@ export class Level {
     this.staticKeys = new Set(); // the same static cubes as "x,y,z" (used to find the top of each stack)
     this.solid = new Set(); // every solid cell as "x,y,z" for fast collision checks
     this.meshes = []; // the instanced meshes that draw the static cubes
+    this.coreKeys = new Set(); // static cubes under a Core Fragment (drawn with the special platform model)
   }
 
   // A normal fixed cube: drawn AND solid
@@ -61,6 +63,12 @@ export class Level {
     return this.staticKeys.has(cellKey(x, y + 1, z));
   }
 
+  // Marks a static cube as the platform under a Core Fragment: it gets its own model
+  markCore(x, y, z) {
+    const key = cellKey(x, y, z);
+    if (this.staticKeys.has(key)) this.coreKeys.add(key);
+  }
+
   // Draws ALL static cubes with InstancedMesh (one draw call per material, not per cube).
   // This is the main trick that keeps the game fast on a weak GPU.
   // It starts with plain blue cubes, then swaps in the real models when they have loaded:
@@ -74,21 +82,28 @@ export class Level {
     this.meshes = [placeholder];
     this.scene.add(placeholder);
 
-    Promise.all([loadModel(FLOOR_TILE_URL), loadModel(BASE_BLOCK_URL)])
-      .then(([floorTile, baseBlock]) => {
+    Promise.all([
+      loadModel(FLOOR_TILE_URL),
+      loadModel(BASE_BLOCK_URL),
+      loadModel(CORE_PLATFORM_URL).catch(() => null), // optional: without it the fragment sits on a normal floor tile
+    ])
+      .then(([floorTile, baseBlock, corePlatform]) => {
         // The level may have been unloaded while the models were loading
         if (!this.scene.parent) return;
 
         // Split the cubes: top of a stack = floor, everything below = base
         const floorCells = [];
         const baseCells = [];
+        const coreCells = [];
         for (const cell of this.cells) {
-          (this.hasCubeAbove(...cell) ? baseCells : floorCells).push(cell);
+          if (corePlatform && this.coreKeys.has(cellKey(...cell))) coreCells.push(cell);
+          else (this.hasCubeAbove(...cell) ? baseCells : floorCells).push(cell);
         }
 
         const modelMeshes = [
           ...this.makeModelInstances(floorTile, floorCells),
           ...this.makeModelInstances(baseBlock, baseCells),
+          ...(corePlatform ? this.makeModelInstances(corePlatform, coreCells) : []),
         ];
         if (modelMeshes.length === 0) return;
 
@@ -155,6 +170,9 @@ export function buildLevel(parent, data) {
       }
     }
   }
+
+  // The cube under each Core Fragment gets the special Core Fragment platform
+  for (const [x, y, z] of data.fragments ?? []) level.markCore(x, y, z);
 
   level.build();
   return level;

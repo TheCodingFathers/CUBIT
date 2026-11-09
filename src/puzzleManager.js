@@ -57,6 +57,13 @@ export class PuzzleManager {
     }
   }
 
+  // GRAVITY FLIP: tell every gravity block that gravity has changed
+  applyGravity(gravity, player) {
+    for (const item of this.items) {
+      if (item.applyGravity) item.applyGravity(gravity, player);
+    }
+  }
+
   // Put every block and structure back where it started
   resetAll() {
     for (const item of this.items) {

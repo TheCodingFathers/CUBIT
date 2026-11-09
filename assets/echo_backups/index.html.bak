@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CUBIT: Core of the Cosmos</title>
+  </head>
+  <body>
+    <!-- The 3D canvas is added inside this div by main.js -->
+    <div id="app"></div>
+
+    <!-- HUD: current objective (top-center) -->
+    <div id="objective">
+      <span class="objective-label">OBJECTIVE</span>
+      <span id="objective-text"></span>
+    </div>
+
+    <!-- HUD: Core Fragment counter (top-right) -->
+    <div id="hud">
+      <span class="hud-label">CORE FRAGMENTS</span>
+      <span id="fragment-count">0 / 0</span>
+    </div>
+
+    <!-- HUD: ability indicators (bottom-right). Only the abilities a level uses are shown. -->
+    <div id="abilities">
+      <div id="ability-shift" class="ability"><span class="ability-key">Q</span> SHIFT</div>
+      <div id="ability-rotate" class="ability"><span class="ability-key">R</span> ROTATE</div>
+    </div>
+
+    <!-- Level complete message (shown when every fragment is collected) -->
+    <div id="complete">
+      <div class="complete-title">LEVEL COMPLETE</div>
+      <div class="complete-sub">All Core Fragments recovered</div>
+      <div class="complete-hint" id="complete-hint">Backspace to play again</div>
+    </div>
+
+    <!-- Interaction prompt (shown when CUBIT is near something it can SHIFT or ROTATE) -->
+    <div id="prompt"></div>
+
+    <!-- Pause menu (Esc) -->
+    <div id="pause">
+      <div class="pause-panel">
+        <div class="pause-title">PAUSED</div>
+        <button id="resume-button" type="button">Resume</button>
+        <button id="restart-button" type="button">Restart Level</button>
+        <div class="pause-hint">Esc to resume</div>
+      </div>
+    </div>
+
+    <!-- Controls reminder, bottom-left -->
+    <div id="controls">WASD move · Space jump · Q shift · R rotate · Backspace restart · Esc pause</div>
+
+    <!-- Tiny performance readout. We will remove it before release. -->
+    <div id="fps">FPS: --</div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

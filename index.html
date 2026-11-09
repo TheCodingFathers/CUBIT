@@ -25,6 +25,7 @@
     <div id="abilities">
       <div id="ability-shift" class="ability"><span class="ability-key">Q</span> SHIFT</div>
       <div id="ability-rotate" class="ability"><span class="ability-key">R</span> ROTATE</div>
+      <div id="ability-echo" class="ability hidden"><span class="ability-key">E</span> ECHO</div>
     </div>
 
     <!-- Level complete message (shown when every fragment is collected) -->
@@ -37,6 +38,9 @@
     <!-- Interaction prompt (shown when CUBIT is near something it can SHIFT or ROTATE) -->
     <div id="prompt"></div>
 
+    <!-- CORE ECHO status (recording / replaying / holding) -->
+    <div id="echo-status"></div>
+
     <!-- Pause menu (Esc) -->
     <div id="pause">
       <div class="pause-panel">
@@ -48,7 +52,7 @@
     </div>
 
     <!-- Controls reminder, bottom-left -->
-    <div id="controls">WASD move · Space jump · Q shift · R rotate · Backspace restart · Esc pause</div>
+    <div id="controls">WASD move · Space jump · Q shift · R rotate · E echo · Backspace restart · Esc pause</div>
 
     <!-- Tiny performance readout. We will remove it before release. -->
     <div id="fps">FPS: --</div>
