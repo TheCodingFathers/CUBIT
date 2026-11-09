@@ -35,6 +35,8 @@ export class Player {
     this.start = START.clone(); // where CUBIT respawns in the current level
     this.position = START.clone(); // center of the collision box
     this.onGround = false;
+    this.onJump = null; // optional callbacks, used for sound
+    this.onLand = null;
 
     // ---- Gravity ----
     this.gravity = DOWN.clone(); // direction CUBIT falls (always one of the six world axes)
@@ -300,6 +302,7 @@ export class Player {
     // ---- Jump and gravity ----
     if (input.wasPressed('Space') && this.onGround) {
       this.fallSpeed = -JUMP_SPEED;
+      this.onJump?.();
     }
     this.fallSpeed = Math.min(this.fallSpeed + GRAVITY * delta, MAX_FALL_SPEED);
 
@@ -316,6 +319,7 @@ export class Player {
       if (this.fallSpeed > 0) {
         this.onGround = true; // landed on something
         // A real landing (not just standing) plays the squash, unless another one-shot is playing
+        if (!wasOnGround && this.fallSpeed > LAND_MIN_SPEED) this.onLand?.();
         if (!wasOnGround && this.fallSpeed > LAND_MIN_SPEED && !this.oneShot) this.play('Land');
       }
       this.fallSpeed = 0; // landed, or bumped something above

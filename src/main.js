@@ -6,6 +6,7 @@ import { Player } from './player.js';
 import { LevelManager } from './levelManager.js';
 import { CoreEcho, ECHO_MAX_SECONDS } from './echo.js';
 import { BlobShadow } from './blobShadow.js';
+import { audio } from './audio.js';
 import { LEVELS } from './levels/index.js';
 
 // ---------------------------------------------------------------
@@ -54,6 +55,11 @@ scene.add(sun);
 // ---------------------------------------------------------------
 const player = new Player(scene);
 const shadow = new BlobShadow(scene); // soft shadow under CUBIT: makes jumps and edges easier to judge
+
+// SOUND: browsers keep audio locked until the first key press or click
+for (const type of ['keydown', 'pointerdown']) window.addEventListener(type, audio.unlock);
+player.onJump = () => audio.jump();
+player.onLand = () => audio.land();
 const levels = new LevelManager(scene, player, LEVELS);
 levels.load(0);
 
@@ -239,6 +245,7 @@ function turnGravity(how) {
   const direction = player.gravityTarget(how);
   if (player.setGravity(direction)) {
     levels.puzzles.applyGravity(player.gravity, player); // gravity blocks fall too
+    audio.gravity();
     showNotice(`Gravity ${gravityName(player.gravity)}`);
   }
 }
@@ -246,7 +253,10 @@ function turnGravity(how) {
 function setPaused(value) {
   paused = value;
   pauseMenu.classList.toggle('visible', paused);
-  if (paused) refreshLevelButtons();
+  if (paused) {
+    refreshLevelButtons();
+    audio.hum(false); // the beam hum stops while the game is paused
+  }
 }
 
 // Small message under the objective, shown for a moment (created here, styled in style.css)
@@ -305,12 +315,62 @@ function showLevelHint() {
   hintTimer = setTimeout(() => hintBox.classList.remove('visible'), 10000);
 }
 
+// ---------------------------------------------------------------
+// SOUND for things that change by themselves: doors, plates, receivers, the beam and CORE ECHO.
+// It remembers last frame's state and plays a sound when something just changed.
+// ---------------------------------------------------------------
+const soundState = { group: null, doors: [], plates: [], receivers: [], echo: null };
+
+function watchSounds() {
+  // A new level just loaded: start from its current state without playing anything
+  if (soundState.group !== levels.group) {
+    soundState.group = levels.group;
+    soundState.doors = [];
+    soundState.plates = [];
+    soundState.receivers = [];
+    soundState.echo = null;
+  }
+
+  const mech = levels.mechanisms;
+  const circuit = levels.circuit;
+
+  mech?.doors.forEach((door, i) => {
+    const before = soundState.doors[i];
+    if (before !== undefined && before !== door.open) door.open ? audio.doorOpen() : audio.doorClose();
+    soundState.doors[i] = door.open;
+  });
+  mech?.plates.forEach(({ plate }, i) => {
+    const before = soundState.plates[i];
+    if (before !== undefined && before !== plate.pressed) plate.pressed ? audio.plateOn() : audio.plateOff();
+    soundState.plates[i] = plate.pressed;
+  });
+  circuit?.receivers.forEach((receiver, i) => {
+    if (soundState.receivers[i] === false && receiver.powered) audio.receiverOn();
+    soundState.receivers[i] = receiver.powered;
+  });
+  audio.hum((circuit?.sources.length ?? 0) > 0);
+
+  const kind = echo.status?.kind ?? null;
+  if (kind !== soundState.echo) {
+    if (kind === 'recording') audio.echoStart();
+    else if (soundState.echo === 'recording' && kind) audio.echoStop();
+    else if (kind === null && soundState.echo) audio.echoOff();
+    soundState.echo = kind;
+  }
+}
+
 // Uses SHIFT or ROTATE. CUBIT plays the Interact animation only when the ability really works.
 // If something is in range but cannot move right now, a message says so.
 function useAbility(kind) {
   const target = levels.puzzles.findTarget(player, kind);
-  if (target && target.canActivate) player.play('Interact');
-  else if (target) showNotice('Something is in the way');
+  if (target && target.canActivate) {
+    player.play('Interact');
+    if (kind === 'shift') audio.shift();
+    else audio.rotate();
+  } else if (target) {
+    showNotice('Something is in the way');
+    audio.blocked();
+  }
   levels.puzzles.tryActivate(player, kind);
 }
 
@@ -409,6 +469,7 @@ function animate() {
   const elapsed = clock.elapsedTime;
 
   if (input.wasPressed('Escape')) setPaused(!paused);
+  if (input.wasPressed('KeyM')) showNotice(audio.toggleMute() ? 'Sound off' : 'Sound on');
 
   if (!paused) {
     // Abilities: SHIFT (Q) and ROTATE (R)
@@ -447,12 +508,18 @@ function animate() {
     if (levels.update(delta, elapsed, echo.actors)) {
       // A fragment was collected and/or the level was completed
       if (levels.fragments.collectedCount > lastCollected) player.play('Collect');
-      if (levels.complete) player.celebrate(true);
+      if (levels.complete) {
+        player.celebrate(true);
+        audio.complete();
+      } else if (levels.fragments.collectedCount > lastCollected) {
+        audio.collect();
+      }
       refreshHud();
     }
     updatePrompt();
     updateEchoHud();
     updateGravityHud();
+    watchSounds();
   }
 
   // Smooth camera follow (the view turns with gravity)
