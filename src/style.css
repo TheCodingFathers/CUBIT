@@ -134,30 +134,6 @@ body {
   user-select: none;
 }
 
-/* Current objective, top-center */
-#objective {
-  position: fixed;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 6px 18px;
-  background: rgba(10, 18, 48, 0.85);
-  border: 1px solid var(--cyan);
-  font-family: monospace;
-  font-size: 15px;
-  color: var(--cyan);
-  white-space: nowrap;
-  pointer-events: none;
-  user-select: none;
-}
-
-#objective .objective-label {
-  margin-right: 10px;
-  font-size: 12px;
-  letter-spacing: 2px;
-  opacity: 0.6;
-}
-
 /* Ability indicators, bottom-right */
 #abilities {
   position: fixed;
@@ -254,10 +230,10 @@ body {
   font-size: 12px;
   color: #6f7fa8;
 }
-/* "Blocked" notice: shown briefly when SHIFT or ROTATE is refused, under the objective */
+/* "Blocked" notice: shown briefly when SHIFT or ROTATE is refused, at the top */
 #notice {
   position: fixed;
-  top: 56px;
+  top: 10px;
   left: 50%;
   transform: translateX(-50%);
   padding: 6px 18px;
@@ -370,10 +346,10 @@ body {
   color: var(--cyan);
 }
 
-/* First-time hint: one short line under the objective and the notice */
+/* First-time hint: one short line under the notice */
 #hint {
   position: fixed;
-  top: 100px;
+  top: 56px;
   left: 50%;
   transform: translateX(-50%);
   max-width: min(560px, 86vw);

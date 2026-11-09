@@ -1,0 +1,213 @@
+import * as THREE from 'three';
+import { COLORS } from './constants.js';
+import { loadModel } from './level.js';
+
+// Pressure plates and energy doors.
+//   - A plate is pressed while CUBIT or its Echo stands on it.
+//   - A door is open while EVERY plate linked to it is pressed and EVERY CORE CIRCUIT receiver linked to it is powered.
+// A door is orange while it waits and cyan once it is open.
+// A plate is dim blue while it waits and glows cyan while it is pressed.
+//
+// Level data:
+//   plates: [{ cell: [x, y, z], door: 0 }]   cell = the cube the plate sits on, door = index in doors
+//   doors:  [{ cells: [[x, y, z], ...] }]     the cells the door fills while it is closed
+
+const FADE_TIME = 0.3; // seconds a door takes to open or close
+const HALF = { x: 0.35, y: 0.4, z: 0.35 }; // CUBIT's (and the Echo's) collision box
+const EPS = 0.0001;
+const ORANGE = new THREE.Color(COLORS.orange);
+const CYAN = new THREE.Color(COLORS.cyan);
+
+// PRESSURE PLATE look (model made in Blender, lives in public/models/)
+const PLATE_MODEL_URL = '/models/pressure_plate.glb';
+const PLATE_SINK = 0.02; // how far the pad sinks when pressed
+const GLOW_OFF = 0.55; // brightness of the light strips and the square symbol while waiting
+const GLOW_ON = 1.6; // ...and while pressed
+const PAD_GLOW = 0.8; // how bright the pad glows while pressed
+const BLACK = new THREE.Color(0x000000);
+
+// Is this actor (CUBIT or the Echo) standing on top of the cube at (x, y, z)?
+function standsOn(actor, [x, y, z]) {
+  const p = actor.position;
+  if (Math.abs(p.x - x) > 0.5 || Math.abs(p.z - z) > 0.5) return false;
+  const feet = p.y - HALF.y;
+  const top = y + 0.5;
+  return feet > top - 0.1 && feet < top + 0.25;
+}
+
+// Is this actor's box overlapping the grid cell (x, y, z)?
+function overlapsCell(actor, [x, y, z]) {
+  const p = actor.position;
+  return (
+    Math.abs(p.x - x) < HALF.x + 0.5 - EPS &&
+    Math.abs(p.z - z) < HALF.z + 0.5 - EPS &&
+    p.y + HALF.y > y - 0.5 + EPS &&
+    p.y - HALF.y < y + 0.5 - EPS
+  );
+}
+
+class PressurePlate {
+  constructor(scene, cell) {
+    this.cell = cell;
+    this.pressed = false;
+    this.blend = 0; // 0 = waiting, 1 = pressed
+
+    this.group = new THREE.Group();
+    this.group.position.set(cell[0], cell[1] + 0.5, cell[2]); // on top of its cube
+    scene.add(this.group);
+
+    // Placeholder flat plate, shown until the Blender model has loaded (and kept if loading fails)
+    this.placeholder = new THREE.Mesh(
+      new THREE.BoxGeometry(0.86, 0.06, 0.86),
+      new THREE.MeshStandardMaterial({ color: COLORS.navy })
+    );
+    this.placeholder.position.y = 0.03;
+    this.group.add(this.placeholder);
+
+    // Parts of the model that change when the plate is pressed (set when the model has loaded)
+    this.pad = null;
+    this.padRestY = 0;
+    this.padMaterial = null;
+    this.padOffColor = null;
+    this.glowMaterial = null;
+
+    loadModel(PLATE_MODEL_URL)
+      .then((source) => this.useModel(source))
+      .catch((error) => {
+        console.warn('Could not load the pressure plate model, keeping the placeholder.', error);
+      });
+  }
+
+  // Swaps the placeholder for the real plate (GLB from Blender)
+  useModel(source) {
+    const model = source.clone(true); // shares geometry, so it is cheap
+    const pad = model.getObjectByName('Plate_Pad');
+    const strips = model.getObjectByName('Plate_Strips');
+    if (!pad || !strips) throw new Error('pressure_plate.glb needs the parts Plate_Pad and Plate_Strips');
+
+    // Every plate gets its own copy of the materials, so each one lights up on its own
+    const copies = new Map();
+    model.traverse((object) => {
+      if (!object.isMesh) return;
+      if (!copies.has(object.material)) copies.set(object.material, object.material.clone());
+      object.material = copies.get(object.material);
+    });
+
+    this.pad = pad;
+    this.padRestY = pad.position.y;
+    this.padMaterial = pad.material;
+    this.padOffColor = pad.material.color.clone();
+    this.glowMaterial = strips.material; // the strips and the square symbol share this material
+
+    this.group.remove(this.placeholder);
+    this.placeholder.geometry.dispose();
+    this.placeholder.material.dispose();
+    this.group.add(model);
+    this.applyLook();
+  }
+
+  // Sets the pad and the glow from this.blend (0 = waiting, 1 = pressed)
+  applyLook() {
+    const b = this.blend;
+    if (!this.pad) {
+      this.placeholder.position.y = 0.03 - 0.02 * b;
+      return;
+    }
+    this.pad.position.y = this.padRestY - PLATE_SINK * b; // the pad sinks when pressed
+    this.padMaterial.color.copy(this.padOffColor).lerp(CYAN, b);
+    this.padMaterial.emissive.copy(BLACK).lerp(CYAN, b);
+    this.padMaterial.emissiveIntensity = PAD_GLOW;
+    this.glowMaterial.emissive.copy(CYAN);
+    this.glowMaterial.emissiveIntensity = GLOW_OFF + (GLOW_ON - GLOW_OFF) * b;
+  }
+
+  update(delta, actors) {
+    this.pressed = actors.some((actor) => standsOn(actor, this.cell));
+
+    const target = this.pressed ? 1 : 0;
+    this.blend += (target - this.blend) * Math.min(1, 12 * delta);
+    this.applyLook();
+  }
+}
+
+class EnergyDoor {
+  constructor(scene, level, cells) {
+    this.level = level;
+    this.cells = cells;
+    this.open = false;
+    this.amount = 0; // 0 = closed, 1 = fully open (for the fade)
+
+    this.group = new THREE.Group();
+    scene.add(this.group);
+
+    this.panelMaterial = new THREE.MeshStandardMaterial({
+      color: COLORS.orange,
+      emissive: COLORS.orange,
+      emissiveIntensity: 0.8,
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false,
+    });
+    this.lineMaterial = new THREE.LineBasicMaterial({ color: COLORS.orange, transparent: true, opacity: 0.9 });
+
+    const cellBox = new THREE.BoxGeometry(0.96, 0.96, 0.96);
+    const cellEdges = new THREE.EdgesGeometry(cellBox);
+    for (const cell of cells) {
+      this.level.addCollision(...cell); // a closed door is solid
+      const panel = new THREE.Mesh(cellBox, this.panelMaterial);
+      panel.position.set(...cell);
+      panel.add(new THREE.LineSegments(cellEdges, this.lineMaterial));
+      this.group.add(panel);
+    }
+  }
+
+  update(delta, actors, shouldOpen) {
+    if (shouldOpen && !this.open) {
+      this.open = true;
+      for (const cell of this.cells) this.level.removeCollision(...cell);
+    } else if (!shouldOpen && this.open) {
+      // Never close on top of someone standing in the doorway
+      const blocked = this.cells.some((cell) => actors.some((actor) => overlapsCell(actor, cell)));
+      if (!blocked) {
+        this.open = false;
+        for (const cell of this.cells) this.level.addCollision(...cell);
+      }
+    }
+
+    const target = this.open ? 1 : 0;
+    const step = delta / FADE_TIME;
+    this.amount = target > this.amount ? Math.min(target, this.amount + step) : Math.max(target, this.amount - step);
+
+    this.panelMaterial.opacity = 0.4 * (1 - this.amount);
+    this.panelMaterial.color.copy(ORANGE).lerp(CYAN, this.amount);
+    this.panelMaterial.emissive.copy(ORANGE).lerp(CYAN, this.amount);
+    this.lineMaterial.color.copy(ORANGE).lerp(CYAN, this.amount);
+    this.lineMaterial.opacity = 0.9 - 0.78 * this.amount; // only a faint frame is left when open
+  }
+}
+
+// Builds the plates and doors of a level from its data, and keeps them up to date
+export class MechanismManager {
+  constructor(scene, level, data) {
+    this.doors = (data.doors ?? []).map((door) => new EnergyDoor(scene, level, door.cells));
+    this.plates = (data.plates ?? []).map((plate) => ({
+      plate: new PressurePlate(scene, plate.cell),
+      door: plate.door,
+    }));
+  }
+
+  // actors = everything that can press a plate (CUBIT and the Echo)
+  update(delta, elapsed, actors, receivers = []) {
+    for (const { plate } of this.plates) plate.update(delta, actors);
+
+    this.doors.forEach((door, index) => {
+      const linked = this.plates.filter((entry) => entry.door === index);
+      const linkedReceivers = receivers.filter((receiver) => receiver.door === index);
+      const shouldOpen =
+        linked.length + linkedReceivers.length > 0 &&
+        linked.every((entry) => entry.plate.pressed) &&
+        linkedReceivers.every((receiver) => receiver.powered);
+      door.update(delta, actors, shouldOpen);
+    });
+  }
+}

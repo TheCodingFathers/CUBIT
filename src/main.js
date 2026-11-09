@@ -103,7 +103,6 @@ window.addEventListener('resize', () => {
 const clock = new THREE.Clock();
 const fpsLabel = document.getElementById('fps');
 const promptLabel = document.getElementById('prompt');
-const objectiveText = document.getElementById('objective-text');
 const fragmentCountLabel = document.getElementById('fragment-count');
 const completeScreen = document.getElementById('complete');
 const completeHint = document.getElementById('complete-hint');
@@ -124,7 +123,6 @@ function refreshHud() {
   const data = levels.data;
   const fragments = levels.fragments;
 
-  objectiveText.textContent = data.objective ?? '';
   fragmentCountLabel.textContent = `${fragments.collectedCount} / ${fragments.total}`;
   completeHint.textContent = levels.hasNext ? 'Enter for the next level' : 'Backspace to play again';
   completeScreen.classList.toggle('visible', levels.complete);
@@ -259,7 +257,7 @@ function setPaused(value) {
   }
 }
 
-// Small message under the objective, shown for a moment (created here, styled in style.css)
+// Small message at the top, shown for a moment (created here, styled in style.css)
 const notice = document.createElement('div');
 notice.id = 'notice';
 document.body.appendChild(notice);
