@@ -35,6 +35,11 @@ const SOURCE_MODEL_URL = '/models/energy_source.glb';
 const SOURCE_BEAM_START = 0.46; // the beam starts at the orange aperture, a little before the edge of the cell
 const SOURCE_PULSE_SPEED = 2.5; // how fast the orange aperture pulses
 const SOURCE_GLOW_SIZE = 0.6; // size of the soft glow at the aperture
+
+// MIRROR look (model made in Blender, lives in public/models/)
+const MIRROR_MODEL_URL = '/models/mirror.glb';
+const MIRROR_FLARE = 2.0; // how much brighter the mirror's lights get while it turns (2 = three times as bright)
+const MIRROR_GLOW_SIZE = 0.5; // size of the glow where the beam bounces
 const ORANGE = new THREE.Color(COLORS.orange);
 const CYAN = new THREE.Color(COLORS.cyan);
 
@@ -200,6 +205,8 @@ class Reflector {
     this.t = 0;
     this.fromAngle = 0;
     this.toAngle = 0;
+    this.flare = 0; // 0 to 1: how much the lights flare up while the mirror turns
+    this.glowAmount = 0; // 0 to 1: the glow where the beam bounces
     this.center = new THREE.Vector3(...cell);
     level.addCollision(...cell);
 
@@ -207,12 +214,14 @@ class Reflector {
     this.group.position.set(...cell);
     scene.add(this.group);
 
+    // Placeholder (flat base and a glass panel), shown until the Blender model has loaded (kept if loading fails)
+    this.placeholder = new THREE.Group();
     const base = new THREE.Mesh(
       new THREE.BoxGeometry(0.9, 0.2, 0.9),
       new THREE.MeshStandardMaterial({ color: COLORS.blue })
     );
     base.position.y = -0.4;
-    this.group.add(base);
+    this.placeholder.add(base);
 
     const panelGeometry = new THREE.BoxGeometry(0.95, 0.9, 0.06);
     this.panel = new THREE.Mesh(
@@ -227,22 +236,90 @@ class Reflector {
     );
     this.panel.position.y = 0.05;
     this.panel.add(new THREE.LineSegments(new THREE.EdgesGeometry(panelGeometry), new THREE.LineBasicMaterial({ color: COLORS.cyan })));
-    this.group.add(this.panel);
+    this.placeholder.add(this.panel);
+    this.group.add(this.placeholder);
 
-    // Ghost outline: where the mirror will be after the next ROTATE
-    this.ghost = new THREE.LineSegments(
-      new THREE.EdgesGeometry(panelGeometry),
-      new THREE.LineBasicMaterial({ color: COLORS.cyan, transparent: true, opacity: 0.4 })
-    );
-    this.ghost.position.y = 0.05;
-    this.group.add(this.ghost);
+    this.turning = this.panel; // the part that turns (later: the whole top of the model)
+    this.lightMaterials = []; // the cyan lights and the glass, they flare while the mirror turns
+    this.glow = null;
 
     this.applyState();
+
+    loadModel(MIRROR_MODEL_URL)
+      .then((source) => this.useModel(source))
+      .catch((error) => {
+        console.warn('Could not load the mirror model, keeping the placeholder.', error);
+      });
+  }
+
+  // Swaps the placeholder for the real mirror (GLB from Blender)
+  useModel(source) {
+    const model = source.clone(true); // shares geometry, so it is cheap
+    const head = model.getObjectByName('Mirror_Head'); // turntable, frame and glass: the part that turns
+    if (!head) throw new Error('mirror.glb needs a part called Mirror_Head');
+
+    // Every mirror gets its own copy of the materials
+    const copies = new Map();
+    model.traverse((object) => {
+      if (!object.isMesh) return;
+      if (!copies.has(object.material)) {
+        const copy = object.material.clone();
+        copies.set(object.material, copy);
+        if (['Mirror_Cyan', 'Mirror_Glass', 'Mirror_Shine'].includes(copy.name)) {
+          this.lightMaterials.push({ material: copy, base: copy.emissiveIntensity });
+        }
+      }
+      object.material = copies.get(object.material);
+    });
+
+    model.position.y = -0.5; // the model's bottom is on the floor, 0.5 below the middle of the cell
+    this.group.remove(this.placeholder);
+    this.placeholder.traverse((object) => {
+      if (object.geometry) object.geometry.dispose();
+      if (object.material) object.material.dispose();
+    });
+    this.group.add(model);
+
+    this.turning = head;
+    // Soft glow at the bounce point (shown while the beam hits the mirror)
+    const texture = getApertureGlowTexture();
+    if (texture) {
+      this.glow = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: texture,
+          color: CYAN,
+          transparent: true,
+          opacity: 0,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      this.glow.scale.set(MIRROR_GLOW_SIZE, MIRROR_GLOW_SIZE, 1);
+      this.glow.visible = false;
+      this.group.add(this.glow);
+    }
+
+    this.applyState();
+    this.applyLook();
   }
 
   applyState() {
-    this.panel.rotation.y = mirrorAngle(this.state);
-    this.ghost.rotation.y = mirrorAngle(1 - this.state);
+    this.turning.rotation.y = mirrorAngle(this.state);
+  }
+
+  // The lights flare up while the mirror turns, then settle
+  applyLook() {
+    for (const { material, base } of this.lightMaterials) {
+      material.emissiveIntensity = base * (1 + MIRROR_FLARE * this.flare);
+    }
+  }
+
+  // Called every frame by the circuit: is the beam bouncing off this mirror right now?
+  setHit(hit, elapsed) {
+    if (!this.glow) return;
+    this.glowAmount += ((hit ? 1 : 0) - this.glowAmount) * 0.2;
+    this.glow.visible = this.glowAmount > 0.01;
+    this.glow.material.opacity = this.glowAmount * (0.6 + 0.15 * Math.sin(elapsed * 6));
   }
 
   reflect(direction) {
@@ -263,14 +340,21 @@ class Reflector {
     this.toAngle = mirrorAngle(this.state);
     this.t = 0;
     this.moving = true;
-    this.ghost.rotation.y = mirrorAngle(1 - this.state);
   }
 
   update(delta) {
-    if (!this.moving) return;
+    if (!this.moving) {
+      if (this.flare !== 0) {
+        this.flare = 0;
+        this.applyLook();
+      }
+      return;
+    }
     this.t = Math.min(1, this.t + delta / TURN_TIME);
     const eased = this.t * this.t * (3 - 2 * this.t);
-    this.panel.rotation.y = THREE.MathUtils.lerp(this.fromAngle, this.toAngle, eased);
+    this.turning.rotation.y = THREE.MathUtils.lerp(this.fromAngle, this.toAngle, eased);
+    this.flare = Math.sin(Math.PI * this.t); // strongest in the middle of the turn
+    this.applyLook();
     if (this.t >= 1) this.moving = false;
   }
 
@@ -278,7 +362,9 @@ class Reflector {
     this.state = this.startState;
     this.moving = false;
     this.t = 0;
+    this.flare = 0;
     this.applyState();
+    this.applyLook();
   }
 }
 
@@ -383,6 +469,7 @@ export class CircuitManager {
   trace() {
     const segments = [];
     const powered = new Set();
+    const hit = new Set(); // mirrors that a beam is bouncing off right now
 
     for (const source of this.sources) {
       const y = source.cell[1];
@@ -407,6 +494,7 @@ export class CircuitManager {
             ended = true;
           } else {
             segments.push([y, start[0], start[1], cx, cz]);
+            hit.add(reflector);
             d = reflector.reflect(d);
             start = [cx, cz];
           }
@@ -427,7 +515,7 @@ export class CircuitManager {
         }
       }
     }
-    return { segments, powered };
+    return { segments, powered, hit };
   }
 
   rebuildBeams(segments) {
@@ -463,7 +551,7 @@ export class CircuitManager {
 
   // Returns [{ door, powered }] for the mechanisms, so receivers can open doors
   update(delta, elapsed) {
-    const { segments, powered } = this.trace();
+    const { segments, powered, hit } = this.trace();
 
     const signature = segments.map((s) => s.join(',')).join('|');
     if (signature !== this.signature) {
@@ -474,6 +562,7 @@ export class CircuitManager {
     this.coreMaterial.opacity = 0.9 + 0.05 * Math.sin(elapsed * 11); // the hot core flickers a little
     this.timeUniform.value = elapsed; // drives the spinning strands and the pulses
     for (const source of this.sources) source.update(elapsed);
+    for (const reflector of this.reflectors) reflector.setHit(hit.has(reflector), elapsed);
 
     for (const receiver of this.receivers) {
       receiver.powered = powered.has(receiver);
