@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { COLORS } from './constants.js';
+import { loadModel } from './level.js';
 
 // CORE CIRCUIT: energy beams, mirrors and receivers.
 //
@@ -23,6 +24,17 @@ const MAX_STEPS = 18; // a beam never travels farther than this many cells
 const TURN_TIME = 0.35; // seconds a mirror takes to turn
 const CORE_THICKNESS = 0.1;
 const HALO_THICKNESS = 0.26;
+const BEAM_CORE_COLOR = 0xc8f8ff; // the hot centre of the beam is nearly white
+const HELIX_RADIUS = 0.16; // how far the spinning strands are from the middle of the beam
+const BEAM_SPIN_SPEED = 1.0; // how fast the strands spin around the beam (radians per second, lower = slower)
+const BEAM_TWIST = 2.5; // how tightly the strands wind around the beam (radians per cube of length)
+const BEAM_PULSE_SPEED = 3.0; // how fast the bright pulses run along the beam
+
+// ENERGY SOURCE look (model made in Blender, lives in public/models/)
+const SOURCE_MODEL_URL = '/models/energy_source.glb';
+const SOURCE_BEAM_START = 0.46; // the beam starts at the orange aperture, a little before the edge of the cell
+const SOURCE_PULSE_SPEED = 2.5; // how fast the orange aperture pulses
+const SOURCE_GLOW_SIZE = 0.6; // size of the soft glow at the aperture
 const ORANGE = new THREE.Color(COLORS.orange);
 const CYAN = new THREE.Color(COLORS.cyan);
 
@@ -33,7 +45,60 @@ const reflectDirection = (d, state) => (state === 0 ? [d[1], d[0]] : [-d[1], -d[
 // The panel's angle around the vertical axis in each state (they are 90 degrees apart)
 const mirrorAngle = (state) => (state === 0 ? -Math.PI / 4 : Math.PI / 4);
 
+// The living part of the beam: two strands that spin around it, and pulses that run along it.
+// It is drawn on a see-through tube around the beam, so the beam never looks like a plain stick.
+const HELIX_VERTEX = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+const HELIX_FRAGMENT = `
+  uniform float uTime;
+  uniform float uLength;
+  uniform float uSpin;
+  uniform float uTwist;
+  uniform float uPulseSpeed;
+  uniform vec3 uColor;
+  varying vec2 vUv;
+  void main() {
+    float angle = vUv.x * 6.2831853;   // around the beam
+    float along = vUv.y * uLength;     // distance along the beam, in cubes
+    float phase = angle + along * uTwist - uTime * uSpin;
+    float strands = pow(max(0.0, cos(phase)), 10.0) + pow(max(0.0, -cos(phase)), 10.0);
+    float pulse = pow(0.5 + 0.5 * sin(along * 4.0 - uTime * uPulseSpeed), 6.0);
+    float fade = smoothstep(0.0, 0.04, vUv.y) * smoothstep(1.0, 0.96, vUv.y); // soft ends
+    float intensity = (strands * (0.55 + 0.9 * pulse) + 0.05) * fade;
+    gl_FragColor = vec4(uColor * intensity, intensity);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+  }
+`;
+
 // ---------------------------------------------------------------- Source
+// A soft round glow for the aperture (null when there is no screen, as in the headless playtest)
+let apertureGlowTexture;
+function getApertureGlowTexture() {
+  if (apertureGlowTexture !== undefined) return apertureGlowTexture;
+  apertureGlowTexture = null;
+  if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0, 'rgba(255,255,255,1)');
+    gradient.addColorStop(0.35, 'rgba(255,255,255,0.45)');
+    gradient.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    apertureGlowTexture = new THREE.CanvasTexture(canvas);
+    apertureGlowTexture.colorSpace = THREE.SRGBColorSpace;
+  }
+  return apertureGlowTexture;
+}
+
 class EnergySource {
   constructor(scene, level, { cell, dir }) {
     this.cell = cell;
@@ -44,20 +109,83 @@ class EnergySource {
     this.group.position.set(...cell);
     scene.add(this.group);
 
+    // Placeholder box with an orange nozzle, shown until the Blender model has loaded (kept if loading fails)
+    this.placeholder = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(0.9, 0.9, 0.9),
       new THREE.MeshStandardMaterial({ color: COLORS.blue })
     );
-    this.group.add(body);
-
-    // Glowing orange nozzle on the side the beam leaves from (orange = core energy)
+    this.placeholder.add(body);
     const alongX = dir[0] !== 0;
     const nozzle = new THREE.Mesh(
       new THREE.BoxGeometry(alongX ? 0.16 : 0.42, 0.42, alongX ? 0.42 : 0.16),
       new THREE.MeshStandardMaterial({ color: COLORS.orange, emissive: COLORS.orange, emissiveIntensity: 1.4 })
     );
     nozzle.position.set(dir[0] * 0.46, 0, dir[1] * 0.46);
-    this.group.add(nozzle);
+    this.placeholder.add(nozzle);
+    this.group.add(this.placeholder);
+
+    this.orangeMaterials = []; // the orange aperture and slots, they pulse
+    this.glow = null;
+
+    loadModel(SOURCE_MODEL_URL)
+      .then((source) => this.useModel(source))
+      .catch((error) => {
+        console.warn('Could not load the energy source model, keeping the placeholder.', error);
+      });
+  }
+
+  // Swaps the placeholder for the real source (GLB from Blender)
+  useModel(source) {
+    const model = source.clone(true); // shares geometry, so it is cheap
+
+    // Every source gets its own copy of the materials
+    const copies = new Map();
+    model.traverse((object) => {
+      if (!object.isMesh) return;
+      if (!copies.has(object.material)) {
+        const copy = object.material.clone();
+        copies.set(object.material, copy);
+        if (copy.name === 'Source_Orange') this.orangeMaterials.push(copy);
+      }
+      object.material = copies.get(object.material);
+    });
+
+    model.position.y = -0.5; // the model's bottom is on the floor, 0.5 below the middle of the cell
+    model.rotation.y = Math.atan2(-this.dir[1], this.dir[0]); // the model shoots along +x, turn it to this source's direction
+
+    this.group.remove(this.placeholder);
+    this.placeholder.traverse((object) => {
+      if (!object.isMesh) return;
+      object.geometry.dispose();
+      object.material.dispose();
+    });
+    this.group.add(model);
+
+    // Soft glow where the beam leaves the aperture
+    const texture = getApertureGlowTexture();
+    if (texture) {
+      this.glow = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: texture,
+          color: CYAN,
+          transparent: true,
+          opacity: 0.8,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      this.glow.scale.set(SOURCE_GLOW_SIZE, SOURCE_GLOW_SIZE, 1);
+      this.glow.position.set(this.dir[0] * SOURCE_BEAM_START, 0, this.dir[1] * SOURCE_BEAM_START);
+      this.group.add(this.glow);
+    }
+  }
+
+  // The aperture pulses slowly, like it is charging
+  update(elapsed) {
+    const pulse = Math.sin(elapsed * SOURCE_PULSE_SPEED);
+    for (const material of this.orangeMaterials) material.emissiveIntensity = 1.2 + 0.5 * pulse;
+    if (this.glow) this.glow.material.opacity = 0.7 + 0.2 * pulse;
   }
 }
 
@@ -217,7 +345,7 @@ export class CircuitManager {
     this.beamGroup = new THREE.Group();
     scene.add(this.beamGroup);
     this.boxGeometry = new THREE.BoxGeometry(1, 1, 1);
-    this.coreMaterial = new THREE.MeshBasicMaterial({ color: COLORS.cyan, transparent: true, opacity: 0.95 });
+    this.coreMaterial = new THREE.MeshBasicMaterial({ color: BEAM_CORE_COLOR, transparent: true, opacity: 0.95 });
     this.haloMaterial = new THREE.MeshBasicMaterial({
       color: COLORS.cyan,
       transparent: true,
@@ -225,7 +353,29 @@ export class CircuitManager {
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
+    this.helixGeometry = new THREE.CylinderGeometry(1, 1, 1, 24, 1, true); // unit tube, scaled per beam piece
+    this.timeUniform = { value: 0 }; // shared by every beam piece
     this.signature = '';
+  }
+
+  // The see-through spinning strands for one straight piece of beam
+  makeHelixMaterial(length) {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: this.timeUniform,
+        uLength: { value: length },
+        uSpin: { value: BEAM_SPIN_SPEED },
+        uTwist: { value: BEAM_TWIST },
+        uPulseSpeed: { value: BEAM_PULSE_SPEED },
+        uColor: { value: CYAN.clone() },
+      },
+      vertexShader: HELIX_VERTEX,
+      fragmentShader: HELIX_FRAGMENT,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    });
   }
 
   // Follows every beam cell by cell. Returns its straight pieces [y, x0, z0, x1, z1]
@@ -239,7 +389,7 @@ export class CircuitManager {
       let d = source.dir;
       let cx = source.cell[0];
       let cz = source.cell[2];
-      let start = [cx + d[0] * 0.5, cz + d[1] * 0.5]; // leaves through the face of the source
+      let start = [cx + d[0] * SOURCE_BEAM_START, cz + d[1] * SOURCE_BEAM_START]; // leaves through the aperture of the source
       let ended = false;
 
       for (let step = 0; step < MAX_STEPS && !ended; step++) {
@@ -281,6 +431,9 @@ export class CircuitManager {
   }
 
   rebuildBeams(segments) {
+    for (const mesh of this.beamGroup.children) {
+      if (mesh.userData.ownsMaterial) mesh.material.dispose();
+    }
     this.beamGroup.clear();
     for (const [y, x0, z0, x1, z1] of segments) {
       const alongX = Math.abs(x1 - x0) > Math.abs(z1 - z0);
@@ -295,6 +448,16 @@ export class CircuitManager {
         mesh.position.set((x0 + x1) / 2, y, (z0 + z1) / 2);
         this.beamGroup.add(mesh);
       }
+
+      // Two strands spinning around the beam, with pulses running from the source outwards
+      const travel = (alongX ? Math.sign(x1 - x0) : Math.sign(z1 - z0)) || 1; // which way the energy flows
+      const helix = new THREE.Mesh(this.helixGeometry, this.makeHelixMaterial(length));
+      helix.userData.ownsMaterial = true;
+      helix.scale.set(HELIX_RADIUS, length, HELIX_RADIUS);
+      if (alongX) helix.rotation.z = -travel * (Math.PI / 2); // the tube's own axis points the way the energy flows
+      else helix.rotation.x = travel * (Math.PI / 2);
+      helix.position.set((x0 + x1) / 2, y, (z0 + z1) / 2);
+      this.beamGroup.add(helix);
     }
   }
 
@@ -308,6 +471,9 @@ export class CircuitManager {
       this.rebuildBeams(segments);
     }
     this.haloMaterial.opacity = 0.16 + 0.06 * Math.sin(elapsed * 8);
+    this.coreMaterial.opacity = 0.9 + 0.05 * Math.sin(elapsed * 11); // the hot core flickers a little
+    this.timeUniform.value = elapsed; // drives the spinning strands and the pulses
+    for (const source of this.sources) source.update(elapsed);
 
     for (const receiver of this.receivers) {
       receiver.powered = powered.has(receiver);
