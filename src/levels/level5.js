@@ -30,7 +30,7 @@ export default {
     {
       positions: [
         [0, 0, -2],
-        [1, 1, -4],
+        [1, 2, -4], // parked out of reach: it only becomes a step after SHIFT
         [0, 1, -4],
       ],
     },

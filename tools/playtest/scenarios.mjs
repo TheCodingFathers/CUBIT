@@ -195,4 +195,69 @@ Object.assign(SCENARIOS_EXPORT, {
   '11x3': [...STAGE1_L11, { goto: [1, null, -17] }, { tap: Q }, { wait: 0.6 }, { goto: [0, null, -29], opts: T }],                                   // block moved, but the second mirror never turned
 });
 
+// ---- Levels 1 to 5: the foundation levels. These tests make sure engine changes never silently break them. ----
+const L2_STAGE1 = [
+  { goto: [1, null, 1] }, { tap: Q }, { wait: 0.6 },                       // SHIFT block A against the tall platform
+  { goto: [0, null, -2] },                                                  // up the step, onto the tall platform
+];
+const L3_BRIDGE = [
+  { goto: [1, null, 1] }, { tap: R }, { wait: 0.8 },                       // the wall turns into a bridge
+  { goto: [0, null, 1] }, { goto: [0, null, -6] },
+];
+const L4_STAGE1 = [
+  { goto: [1, null, 1] }, { tap: R }, { wait: 0.8 },                       // wall -> bridge
+  { goto: [0, null, 1] }, { goto: [0, null, -3] },
+  { tap: Q }, { wait: 0.6 },                                                // block A becomes the step on the bridge end
+  { goto: [0, null, -6] },
+];
+const L5_STAGE1 = [
+  { goto: [1, null, 0] }, { tap: Q }, { wait: 0.6 },                       // block A out of the bridge's way
+  { tap: R }, { wait: 0.8 },                                                // wall -> bridge
+  { goto: [0, null, 0.5] }, { goto: [0, null, -3] },
+  { tap: Q }, { wait: 0.6 },                                                // block A again: now it is the step
+  { goto: [0, null, -6] },
+];
+Object.assign(SCENARIOS_EXPORT, {
+  1: [{ goto: [0, null, -3] }, { goto: [0, null, -8] }, { goto: [-3, null, -8] }, { goto: [-6, null, -8] }],
+  2: [
+    ...L2_STAGE1,
+    { goto: [1, null, -3] }, { tap: Q }, { wait: 0.6 },                    // SHIFT block B into the gap
+    { goto: [0, null, -3] }, { goto: [0, null, -8] },
+  ],
+  3: [
+    ...L3_BRIDGE,
+    { goto: [-1, null, -6] }, { tap: R }, { wait: 0.8 },                   // the bar swings across the second gap
+    { goto: [-8, null, -6] },
+  ],
+  4: [
+    ...L4_STAGE1,
+    { goto: [-1, null, -6] }, { tap: R }, { wait: 0.8 },                   // bar swings across
+    { goto: [-5, null, -6] }, { tap: Q }, { wait: 0.6 },                   // block B becomes the step at the bar's end
+    { goto: [-8, null, -6] },
+  ],
+  5: [
+    ...L5_STAGE1,
+    { goto: [-2, null, -6] }, { tap: Q }, { wait: 0.6 },                   // block B out of the bar's sweep (and onto its end)
+    { tap: R }, { wait: 0.8 },
+    { goto: [-8, null, -6] },
+  ],
+  // Exploit attempts: PASS means the shortcut is blocked
+  '1x1': [{ goto: [-6, null, -8], opts: T }],                                                                         // straight to the goal, ignoring the path
+  '2x1': [{ goto: [0, null, -2], opts: T }],                                                                          // climb the 2-high wall without the step
+  '2x2': [...L2_STAGE1, { goto: [0, null, -8], opts: T }],                                                            // cross the 3-wide gap without block B
+  '3x1': [{ goto: [0, null, -6], opts: T }],                                                                          // cross the 4-wide gap without turning the wall
+  '3x2': [...L3_BRIDGE, { goto: [-8, null, -6], opts: T }],                                                           // second gap without the bar
+  '4x1': [{ goto: [1, null, 1] }, { tap: R }, { wait: 0.8 }, { goto: [0, null, 1] }, { goto: [0, null, -3] }, { goto: [0, null, -6], opts: T }],   // climb the 2-high platform without block A
+  '4x2': [...L4_STAGE1, { goto: [-1, null, -6] }, { tap: R }, { wait: 0.8 }, { goto: [-8, null, -6], opts: T }],       // climb the tower without block B
+  '5x1': [{ tap: R }, { wait: 0.8 },
+          { check: (s) => (s.levels.puzzles.items.some((i) => i.kind === 'rotate' && i.index !== 0) ? 'the wall turned although block A was in the way' : true) },
+          { goto: [0, null, -6], opts: T }],                                                                          // rotate before moving block A
+  '5x2': [{ goto: [1, null, 0] }, { tap: Q }, { wait: 0.6 }, { tap: R }, { wait: 0.8 }, { goto: [0, null, 0.5] }, { goto: [0, null, -3] }, { goto: [0, null, -6], opts: T }], // skip block A's second move (the step)
+  // Smarter shortcuts: use a block where it is parked, without ever pressing SHIFT
+  '2x3': [{ goto: [2, null, 0] }, { goto: [2, null, -2], opts: T }],                                                  // block A as a step, right where it is parked
+  '2x4': [...L2_STAGE1, { goto: [2, null, -3] }, { goto: [2, null, -5], opts: T }, { goto: [0, null, -8], opts: T }],   // block B as a stepping stone, right where it is parked
+  '4x3': [...L4_STAGE1, { goto: [-1, null, -6] }, { tap: R }, { wait: 0.8 }, { goto: [-5, null, -6] }, { goto: [-6, null, -5], opts: T }, { goto: [-8, null, -5], opts: T }], // block B as a step, where it is parked
+  '5x3': [...L5_STAGE1, { goto: [-2, null, -6] }, { tap: R }, { wait: 0.8 }, { goto: [-8, null, -6], opts: T }],        // rotate the bar while block B still blocks it
+});
+
 export default SCENARIOS_EXPORT;

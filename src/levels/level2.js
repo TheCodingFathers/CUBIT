@@ -24,14 +24,14 @@ export default {
     // Block A: parked at the side of the start platform; SHIFT slides it next to the tall platform's wall
     {
       positions: [
-        [2, 1, 0],
+        [2, 1, 3], // parked far from the wall, so it cannot be used as a step before SHIFT
         [0, 1, 0],
       ],
     },
     // Block B: parked beside the gap; SHIFT slides it into the middle of the gap
     {
       positions: [
-        [2, 2, -5],
+        [2, 4, -5], // parked high above the gap, out of reach, until SHIFT brings it down
         [0, 2, -5],
       ],
     },

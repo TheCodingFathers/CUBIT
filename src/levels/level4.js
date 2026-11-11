@@ -28,14 +28,14 @@ export default {
     // Block A: floats beside the end of the future bridge; SHIFT slides it onto the bridge's last cube
     {
       positions: [
-        [1, 1, -4],
+        [1, 2, -4], // parked out of reach: it only becomes a step after SHIFT
         [0, 1, -4],
       ],
     },
     // Block B: floats beside the end of the future bar; SHIFT slides it onto the bar's last cube
     {
       positions: [
-        [-6, 3, -5],
+        [-6, 4, -5], // parked out of reach: it only becomes a step after SHIFT
         [-6, 3, -6],
       ],
     },
