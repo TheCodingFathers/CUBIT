@@ -8,6 +8,9 @@ import { CoreEcho, ECHO_MAX_SECONDS } from './echo.js';
 import { BlobShadow } from './blobShadow.js';
 import { audio } from './audio.js';
 import { LEVELS } from './levels/index.js';
+import { WORLDS } from './worlds.js';
+import { progress } from './progress.js';
+import { createMenus } from './menus.js';
 
 // ---------------------------------------------------------------
 // Settings you can tweak. Lower PIXEL_RATIO_CAP = faster on weak GPUs.
@@ -45,7 +48,8 @@ const camera = new THREE.PerspectiveCamera(
   100
 );
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+scene.add(ambient);
 const sun = new THREE.DirectionalLight(0xffffff, 1.2);
 sun.position.set(4, 8, 3);
 scene.add(sun);
@@ -62,6 +66,29 @@ player.onJump = () => audio.jump();
 player.onLand = () => audio.land();
 const levels = new LevelManager(scene, player, LEVELS);
 levels.load(0);
+
+// WORLDS: each world has its own background and lights (see worlds.js)
+function worldOf(levelIndex) {
+  return WORLDS.find((world) => world.levels.includes(levelIndex)) ?? WORLDS[0];
+}
+
+function applyWorld(levelIndex) {
+  const world = worldOf(levelIndex);
+  scene.background.set(world.background);
+  ambient.color.set(world.ambient.color);
+  ambient.intensity = world.ambient.intensity;
+  sun.color.set(world.sun.color);
+  sun.intensity = world.sun.intensity;
+  sun.position.set(...world.sun.position);
+}
+applyWorld(0);
+
+// The level after this one in the same world, or null at the end of the world
+function nextLevelIndex() {
+  const list = worldOf(levels.index).levels;
+  const k = list.indexOf(levels.index);
+  return k >= 0 && k + 1 < list.length ? list[k + 1] : null;
+}
 
 // CORE ECHO: record a run, then a holographic copy replays it (E to record, C to cancel)
 const echo = new CoreEcho(scene, player);
@@ -124,7 +151,7 @@ function refreshHud() {
   const fragments = levels.fragments;
 
   fragmentCountLabel.textContent = `${fragments.collectedCount} / ${fragments.total}`;
-  completeHint.textContent = levels.hasNext ? 'Enter for the next level' : 'Backspace to play again';
+  completeHint.textContent = nextLevelIndex() !== null ? 'Enter for the next level' : 'Enter for the level menu';
   completeScreen.classList.toggle('visible', levels.complete);
 
   // Only show the abilities this level uses
@@ -386,6 +413,17 @@ restartButton.addEventListener('click', () => {
   setPaused(false);
 });
 
+// Back to the title screen (progress is already saved)
+const menuButton = document.createElement('button');
+menuButton.type = 'button';
+menuButton.id = 'menu-button';
+menuButton.textContent = 'Main Menu';
+restartButton.after(menuButton);
+menuButton.addEventListener('click', () => {
+  setPaused(false);
+  menus.showTitle();
+});
+
 // ---------------------------------------------------------------
 // REVIEW TOOL: level picker in the pause menu (see REVIEW_LEVEL_SELECT at the top)
 // ---------------------------------------------------------------
@@ -405,9 +443,11 @@ function goToLevel(index) {
   player.celebrate(false);
   echo.reset();
   levels.load(index);
+  applyWorld(index);
   snapCamera();
   refreshHud();
   showLevelHint();
+  menus.hide();
   setPaused(false);
   showNotice(levelTitle(index));
 }
@@ -456,6 +496,16 @@ function buildLevelSelect() {
 
 if (REVIEW_LEVEL_SELECT) buildLevelSelect();
 
+// TITLE SCREEN, WORLD AND LEVEL SELECT, SAVED PROGRESS (see menus.js and progress.js)
+const menus = createMenus({
+  worlds: WORLDS,
+  levels: LEVELS,
+  progress,
+  play: (index) => goToLevel(index),
+  onOpen: () => audio.hum(false), // the beam hum stops while a menu is open
+});
+menus.showTitle();
+
 // ---------------------------------------------------------------
 // Game loop: runs once per frame
 // ---------------------------------------------------------------
@@ -466,10 +516,12 @@ function animate() {
   const delta = Math.min(rawDelta, 1 / 30); // cap it so a lag spike can't break collision
   const elapsed = clock.elapsedTime;
 
-  if (input.wasPressed('Escape')) setPaused(!paused);
+  if (menus.isOpen) {
+    if (input.wasPressed('Escape')) menus.back();
+  } else if (input.wasPressed('Escape')) setPaused(!paused);
   if (input.wasPressed('KeyM')) showNotice(audio.toggleMute() ? 'Sound off' : 'Sound on');
 
-  if (!paused) {
+  if (!paused && !menus.isOpen) {
     // Abilities: SHIFT (Q) and ROTATE (R)
     if (input.wasPressed('KeyQ')) useAbility('shift');
     if (input.wasPressed('KeyR')) useAbility('rotate');
@@ -491,13 +543,10 @@ function animate() {
 
     // Restart the level (Backspace), or go on to the next one when finished (Enter)
     if (input.wasPressed('Backspace')) restartLevel();
-    if (input.wasPressed('Enter') && levels.complete && levels.hasNext) {
-      player.celebrate(false);
-      echo.reset();
-      levels.next();
-      snapCamera();
-      refreshHud();
-      showLevelHint();
+    if (input.wasPressed('Enter') && levels.complete) {
+      const next = nextLevelIndex();
+      if (next !== null) goToLevel(next);
+      else menus.showSelect(); // end of the world: back to the level menu
     }
 
     player.update(delta, elapsed, forward);
@@ -509,6 +558,7 @@ function animate() {
       if (levels.complete) {
         player.celebrate(true);
         audio.complete();
+        progress.complete(levels.data.name); // saved
       } else if (levels.fragments.collectedCount > lastCollected) {
         audio.collect();
       }

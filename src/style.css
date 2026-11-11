@@ -372,3 +372,181 @@ body {
 #hint.visible {
   opacity: 1;
 }
+
+/* TITLE SCREEN and LEVEL SELECT */
+#menus {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+  background: radial-gradient(ellipse at center, rgba(14, 28, 74, 0.9) 0%, rgba(10, 18, 48, 0.97) 70%);
+  font-family: monospace;
+  user-select: none;
+}
+
+#menus.visible {
+  display: flex;
+}
+
+#menus .menu-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  min-width: 300px;
+  max-width: 92vw;
+  max-height: 94vh;
+  overflow-y: auto;
+  padding: 28px 40px;
+}
+
+#menus .menu-panel.wide {
+  min-width: min(620px, 92vw);
+  align-items: stretch;
+}
+
+#menus .menu-logo {
+  font-size: 64px;
+  letter-spacing: 14px;
+  color: var(--cyan);
+  text-shadow: 0 0 24px rgba(45, 226, 255, 0.55);
+}
+
+#menus .menu-sub {
+  margin-bottom: 22px;
+  font-size: 14px;
+  letter-spacing: 8px;
+  color: var(--orange);
+}
+
+#menus .menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 300px;
+}
+
+#menus .menu-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 11px 16px;
+  background: transparent;
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  font-family: monospace;
+  font-size: 17px;
+  letter-spacing: 3px;
+  cursor: pointer;
+}
+
+#menus .menu-button.small {
+  align-self: center;
+  width: 160px;
+  margin-top: 6px;
+  font-size: 14px;
+}
+
+#menus .menu-note {
+  font-size: 12px;
+  letter-spacing: 1px;
+  opacity: 0.75;
+}
+
+#menus .menu-button:hover,
+#menus .menu-button:focus-visible {
+  background: var(--cyan);
+  color: var(--navy);
+  outline: none;
+}
+
+#menus .menu-footer {
+  margin-top: 14px;
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: #6f7fa8;
+}
+
+#menus .menu-heading {
+  text-align: center;
+  font-size: 26px;
+  letter-spacing: 6px;
+  color: var(--cyan);
+}
+
+#menus .world-row {
+  padding: 12px 14px;
+  border: 1px solid #34406a;
+  background: rgba(10, 18, 48, 0.6);
+}
+
+#menus .world-row.soon {
+  opacity: 0.45;
+}
+
+#menus .world-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 13px;
+  letter-spacing: 3px;
+  color: var(--orange);
+}
+
+#menus .world-soon {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #8a98c0;
+}
+
+#menus .level-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#menus .level-tile {
+  width: 44px;
+  padding: 9px 0;
+  background: transparent;
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  font-family: monospace;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+#menus .level-tile .menu-label {
+  display: block;
+}
+
+/* completed levels */
+#menus .level-tile.done {
+  background: rgba(45, 226, 255, 0.22);
+  box-shadow: 0 0 8px rgba(45, 226, 255, 0.35);
+}
+
+/* locked levels */
+#menus .level-tile.locked,
+#menus .level-tile:disabled {
+  border-color: #34406a;
+  color: #4a5782;
+  cursor: not-allowed;
+}
+
+#menus .level-tile:not(:disabled):hover,
+#menus .level-tile:not(:disabled):focus-visible {
+  background: var(--cyan);
+  color: var(--navy);
+  outline: none;
+}
+
+#menus .menu-name {
+  min-height: 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--cyan);
+}
