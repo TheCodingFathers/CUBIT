@@ -11,6 +11,7 @@ import { LEVELS } from './levels/index.js';
 import { WORLDS } from './worlds.js';
 import { progress } from './progress.js';
 import { createMenus } from './menus.js';
+import { createBackdrop } from './background.js';
 
 // ---------------------------------------------------------------
 // Settings you can tweak. Lower PIXEL_RATIO_CAP = faster on weak GPUs.
@@ -33,13 +34,14 @@ const container = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, PIXEL_RATIO_CAP));
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.autoClear = false; // each frame draws two scenes: the backdrop first, then the level on top
 container.appendChild(renderer.domElement);
 
 // ---------------------------------------------------------------
 // Scene, camera and lights (no shadows yet: keeps things fast)
 // ---------------------------------------------------------------
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(COLORS.navy);
+// No scene.background here: the backdrop (background.js) is drawn first and the level is drawn over it
 
 const camera = new THREE.PerspectiveCamera(
   50,
@@ -47,6 +49,8 @@ const camera = new THREE.PerspectiveCamera(
   0.1,
   100
 );
+
+const backdrop = createBackdrop(COLORS.navy); // sky and far scenery behind the levels
 
 const ambient = new THREE.AmbientLight(0xffffff, 0.6);
 scene.add(ambient);
@@ -74,7 +78,7 @@ function worldOf(levelIndex) {
 
 function applyWorld(levelIndex) {
   const world = worldOf(levelIndex);
-  scene.background.set(world.background);
+  backdrop.setWorld(world);
   ambient.color.set(world.ambient.color);
   ambient.intensity = world.ambient.intensity;
   sun.color.set(world.sun.color);
@@ -577,6 +581,10 @@ function animate() {
   lookTarget.copy(player.position).addScaledVector(camera.up, 0.3);
   camera.lookAt(lookTarget);
 
+  backdrop.update(camera, elapsed);
+  renderer.clear();
+  renderer.render(backdrop.scene, backdrop.camera);
+  renderer.clearDepth(); // the level always draws over the backdrop
   renderer.render(scene, camera);
   input.endFrame(); // forget "just pressed" keys
 

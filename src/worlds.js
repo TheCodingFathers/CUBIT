@@ -14,6 +14,12 @@ export const WORLDS = [
     ambient: { color: 0xffffff, intensity: 0.6 },
     sun: { color: 0xffffff, intensity: 1.2, position: [4, 8, 3] },
     levels: playable,
+    // BACKDROP (see background.js): the sky behind the levels. A world without one keeps its flat background color.
+    backdrop: {
+      sky: { top: 0x0a1230, mid: 0x0c1f5c, haze: 0x16379a }, // dark at the horizon, a soft blue glow far below
+      specks: 70, // tiny far-away lights
+      speckColor: 0x7fdcff,
+    },
   },
   {
     id: 2,
