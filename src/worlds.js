@@ -22,6 +22,25 @@ export const WORLDS = [
       // The dormant monolith, far away and below the level. heading = the direction the game camera looks along the
       // ground (CAMERA_OFFSET in main.js), elevation = degrees below the horizon, scale = size of the model (about 10 tall).
       monolith: { model: '/models/w01_monolith.glb', heading: [-6, -8], distance: 130, elevation: -24, scale: 3.6, yaw: 0.35 },
+      // Floating islands and loose cubes (scenery only). azimuth = degrees to the right (+) or left (-) of the heading,
+      // elevation = degrees below the horizon, distance and scale like the monolith. slab is about 14 wide, slabB 16, cluster 5.
+      islands: {
+        heading: [-6, -8],
+        models: {
+          slab: '/models/w01_island_slab.glb', // ruined broken arch, left of the monolith
+          slabB: '/models/w01_island_slab_b.glb', // complete gate and a tall block stack, right of the monolith
+          cluster: '/models/w01_island_cluster.glb',
+        },
+        items: [
+          { model: 'slab', azimuth: -34, elevation: -33, distance: 100, scale: 2.3, yaw: 0.5 },
+          { model: 'slabB', azimuth: 36, elevation: -30, distance: 105, scale: 2.05, yaw: -0.5 },
+          { model: 'cluster', azimuth: -14, elevation: -38, distance: 95, scale: 2.2, yaw: 0.3 },
+          { model: 'cluster', azimuth: 17, elevation: -43, distance: 90, scale: 2.0, yaw: -0.4 },
+          { model: 'cluster', azimuth: -26, elevation: -17, distance: 125, scale: 2.0, yaw: 0.8 },
+          { model: 'cluster', azimuth: 27, elevation: -15, distance: 130, scale: 2.2, yaw: -0.7 },
+        ],
+        debris: { count: 34, seed: 7, minSize: 0.8, maxSize: 3.2 }, // loose cubes, one draw call
+      },
     },
   },
   {

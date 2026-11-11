@@ -20,6 +20,10 @@ const RING_SPEED_A = 0.1; // radians per second, the two rings turn in opposite 
 const RING_SPEED_B = -0.16;
 const CRYSTAL_PULSE_SPEED = 1.8;
 
+// Islands: the cyan seams are dimmer than the cyan of the gameplay, and loose cubes are capped
+const ISLAND_SEAM_DIM = 0.55;
+const MAX_DEBRIS = 80;
+
 // Small repeatable random numbers, so the specks are in the same places every time
 function seededRandom(seed) {
   let a = seed;
@@ -148,12 +152,104 @@ export function createBackdrop(defaultColor = 0x0a1230, loadModel = null) {
     anchor.scale.setScalar(data.scale);
   }
 
+  // ISLANDS: big floating slabs, small inverted clusters and loose cubes (scenery only, no collision).
+  // Each island model is drawn with one InstancedMesh per part, so every extra copy costs no extra draw call.
+  const islands = new THREE.Group();
+  islands.visible = false;
+  scene.add(islands);
+  let islandsBuiltFor = null; // the islands data that is built (or being built) right now
+
+  // Puts an object far away: azimuth = degrees to the right (+) or left (-) of the heading, elevation = degrees
+  // below the horizon. Its front turns toward the camera, like the monolith.
+  function aimAt(dummy, heading, spec) {
+    const azimuth = THREE.MathUtils.degToRad(spec.azimuth ?? 0);
+    const elevation = THREE.MathUtils.degToRad(spec.elevation);
+    const cos = Math.cos(azimuth);
+    const sin = Math.sin(azimuth);
+    const dx = heading.x * cos - heading.y * sin;
+    const dz = heading.x * sin + heading.y * cos;
+    const flat = spec.distance * Math.cos(elevation);
+    dummy.position.set(dx * flat, spec.distance * Math.sin(elevation), dz * flat);
+    dummy.rotation.set(0, Math.atan2(-dx, -dz) + (spec.yaw ?? 0), 0);
+  }
+
+  // Loose cubes drifting around: ONE InstancedMesh, colors navy and blue
+  function addDebris(spec, heading) {
+    const count = Math.min(MAX_DEBRIS, spec.count ?? 0);
+    if (count <= 0) return;
+    const random = seededRandom(spec.seed ?? 7);
+    const minSize = spec.minSize ?? 0.8;
+    const maxSize = spec.maxSize ?? 3.2;
+    const mesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true }),
+      count
+    );
+    const dummy = new THREE.Object3D();
+    const navy = new THREE.Color(0x182c78);
+    const blue = new THREE.Color(0x1f49c4);
+    for (let i = 0; i < count; i++) {
+      aimAt(dummy, heading, {
+        azimuth: -50 + random() * 100,
+        elevation: -52 + random() * 44,
+        distance: 70 + random() * 80,
+      });
+      dummy.rotation.set(random() * 3, random() * 3, random() * 3);
+      dummy.scale.setScalar(minSize + random() * (maxSize - minSize));
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+      mesh.setColorAt(i, random() < 0.6 ? navy : blue);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.instanceColor.needsUpdate = true;
+    mesh.frustumCulled = false;
+    islands.add(mesh);
+  }
+
+  function buildIslands(cfg) {
+    const heading = new THREE.Vector2(...(cfg.heading ?? [-6, -8])).normalize();
+    const names = Object.keys(cfg.models);
+    Promise.all(names.map((name) => loadModel(cfg.models[name])))
+      .then((sources) => {
+        if (islandsBuiltFor !== cfg) return; // another world took over meanwhile
+        const dummy = new THREE.Object3D();
+        names.forEach((name, n) => {
+          const items = cfg.items.filter((item) => item.model === name);
+          if (items.length === 0) return;
+          sources[n].traverse((part) => {
+            if (!part.isMesh) return;
+            let material = part.material;
+            if (/cyan|seam/i.test(material.name)) {
+              material = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x2de2ff).multiplyScalar(ISLAND_SEAM_DIM) });
+            }
+            const mesh = new THREE.InstancedMesh(part.geometry, material, items.length);
+            items.forEach((item, i) => {
+              aimAt(dummy, heading, item);
+              dummy.scale.setScalar(item.scale ?? 1);
+              dummy.updateMatrix();
+              mesh.setMatrixAt(i, dummy.matrix);
+            });
+            mesh.instanceMatrix.needsUpdate = true;
+            mesh.frustumCulled = false;
+            islands.add(mesh);
+          });
+        });
+        if (cfg.debris) addDebris(cfg.debris, heading);
+        islands.visible = islandsBuiltFor === cfg;
+      })
+      .catch((error) => {
+        islandsBuiltFor = null; // a later level may try again
+        console.warn('Could not load the island models, the backdrop stays without them.', error);
+      });
+  }
+
   let lastElapsed = 0;
 
   return {
     scene,
     camera,
     monolith: anchor, // exposed for tests
+    islands, // exposed for tests
 
     // Called when a level of another world loads (data comes from worlds.js)
     setWorld(world) {
@@ -182,6 +278,14 @@ export function createBackdrop(defaultColor = 0x0a1230, loadModel = null) {
             monolith.loading = false; // a later level may try again
             console.warn('Could not load the monolith model, the backdrop stays without it.', error);
           });
+      }
+
+      const placed = data?.islands;
+      islands.visible = !!placed && islandsBuiltFor === placed && islands.children.length > 0;
+      if (placed && islandsBuiltFor !== placed && loadModel) {
+        islands.clear(); // islands of another world; the shared model geometry is kept
+        islandsBuiltFor = placed;
+        buildIslands(placed);
       }
     },
 
