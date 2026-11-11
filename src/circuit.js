@@ -40,6 +40,13 @@ const SOURCE_GLOW_SIZE = 0.6; // size of the soft glow at the aperture
 const MIRROR_MODEL_URL = '/models/mirror.glb';
 const MIRROR_FLARE = 2.0; // how much brighter the mirror's lights get while it turns (2 = three times as bright)
 const MIRROR_GLOW_SIZE = 0.5; // size of the glow where the beam bounces
+
+// RECEIVER look (model made in Blender, lives in public/models/)
+const RECEIVER_MODEL_URL = '/models/receiver.glb';
+const RECEIVER_APERTURE = 0.12; // the beam ends at the crystal, this far from the middle of the cell (the crystal is in the middle, between the two pillars)
+const RECEIVER_TURN_SPEED = 10; // how fast the receiver turns its face toward the beam (higher = faster)
+const RECEIVER_GLOW_SIZE = 0.7; // size of the soft glow at the aperture while powered
+const RECEIVER_CORE_ON = new THREE.Color().setRGB(0.423, 0.922, 1.0); // the pale cyan the hexagon fills with
 const ORANGE = new THREE.Color(COLORS.orange);
 const CYAN = new THREE.Color(COLORS.cyan);
 
@@ -201,6 +208,7 @@ class Reflector {
     this.cell = cell;
     this.startState = state;
     this.state = state;
+    this.spin = 0; // quarter turns given so far: it always turns the same way, never back and forth
     this.moving = false;
     this.t = 0;
     this.fromAngle = 0;
@@ -303,8 +311,14 @@ class Reflector {
     this.applyLook();
   }
 
+  // Every ROTATE turns the mirror another 90 degrees to the right (clockwise seen from above).
+  // The beam only cares about the parity of the turns, so the two reflect states stay as they were.
+  targetAngle() {
+    return mirrorAngle(this.startState) - this.spin * (Math.PI / 2);
+  }
+
   applyState() {
-    this.turning.rotation.y = mirrorAngle(this.state);
+    this.turning.rotation.y = this.targetAngle();
   }
 
   // The lights flare up while the mirror turns, then settle
@@ -335,9 +349,10 @@ class Reflector {
   }
 
   activate() {
-    this.fromAngle = mirrorAngle(this.state);
-    this.state = 1 - this.state;
-    this.toAngle = mirrorAngle(this.state);
+    this.fromAngle = this.targetAngle();
+    this.spin += 1;
+    this.state = (this.startState + this.spin) % 2;
+    this.toAngle = this.targetAngle();
     this.t = 0;
     this.moving = true;
   }
@@ -360,6 +375,7 @@ class Reflector {
 
   reset() {
     this.state = this.startState;
+    this.spin = 0;
     this.moving = false;
     this.t = 0;
     this.flare = 0;
@@ -369,21 +385,36 @@ class Reflector {
 }
 
 // ---------------------------------------------------------------- Receiver
+// The receiver has a front (the side the beam arrives on, between the two pillars) and a plain back.
+// It turns its front toward the beam, so it always looks right.
+const yawFor = (direction) => Math.atan2(-direction[1], direction[0]); // the model's front is +x
+
 class EnergyReceiver {
-  constructor(scene, level, { cell, door }) {
+  constructor(scene, level, { cell, door, facing = null }) {
     this.cell = cell;
     this.door = door;
     this.powered = false;
-    this.blend = 0; // 0 = waiting (orange), 1 = powered (cyan)
+    this.blend = 0; // 0 = waiting, 1 = powered
     level.addCollision(...cell);
+
+    // Optional in the level data: facing: [dx, dz] forces the direction the front looks
+    this.facingGiven = facing !== null;
+    this.yaw = yawFor(facing ?? [0, 1]);
+    this.targetYaw = this.yaw;
 
     this.group = new THREE.Group();
     this.group.position.set(...cell);
     scene.add(this.group);
 
+    this.turner = new THREE.Group(); // turns the whole receiver toward the beam
+    this.turner.rotation.y = this.yaw;
+    this.group.add(this.turner);
+
+    // Placeholder box with glowing pads, shown until the Blender model has loaded (kept if loading fails)
+    this.placeholder = new THREE.Group();
     const bodyGeometry = new THREE.BoxGeometry(0.9, 0.9, 0.9);
     const body = new THREE.Mesh(bodyGeometry, new THREE.MeshStandardMaterial({ color: COLORS.navy }));
-    this.group.add(body);
+    this.placeholder.add(body);
 
     this.edgeMaterial = new THREE.LineBasicMaterial({ color: COLORS.orange });
     body.add(new THREE.LineSegments(new THREE.EdgesGeometry(bodyGeometry), this.edgeMaterial));
@@ -400,17 +431,134 @@ class EnergyReceiver {
         this.padMaterial
       );
       pad.position.set(sx * 0.46, 0, sz * 0.46);
-      this.group.add(pad);
+      this.placeholder.add(pad);
+    }
+    this.turner.add(this.placeholder);
+
+    // Filled in when the model has loaded
+    this.model = null;
+    this.coreMaterial = null; // the hexagon in the aperture: dark while waiting, fills with cyan when powered
+    this.cyanMaterial = null; // the neon rim and the slots
+    this.orangeMaterial = null; // the slits on the base: orange while waiting, cyan when powered
+    this.cyanBase = 1;
+    this.orangeBase = 1;
+    this.rays = null; // three ray ticks above the housing, hidden until powered
+    this.glow = null;
+
+    loadModel(RECEIVER_MODEL_URL)
+      .then((source) => this.useModel(source))
+      .catch((error) => {
+        console.warn('Could not load the receiver model, keeping the placeholder.', error);
+      });
+  }
+
+  // Swaps the placeholder for the real receiver (GLB from Blender)
+  useModel(source) {
+    const model = source.clone(true); // shares geometry, so it is cheap
+    const rays = model.getObjectByName('Receiver_Rays');
+    if (!rays) throw new Error('receiver.glb needs a part called Receiver_Rays');
+
+    // Every receiver gets its own copy of the materials, so each one can light up on its own
+    const copies = new Map();
+    model.traverse((object) => {
+      if (!object.isMesh) return;
+      if (!copies.has(object.material)) {
+        const copy = object.material.clone();
+        copies.set(object.material, copy);
+        if (copy.name === 'Receiver_Core') this.coreMaterial = copy;
+        if (copy.name === 'Receiver_Cyan') this.cyanMaterial = copy;
+        if (copy.name === 'Receiver_Orange') this.orangeMaterial = copy;
+      }
+      object.material = copies.get(object.material);
+    });
+    this.cyanBase = this.cyanMaterial ? this.cyanMaterial.emissiveIntensity : 1;
+    this.orangeBase = this.orangeMaterial ? this.orangeMaterial.emissiveIntensity : 1;
+
+    model.position.y = -0.5; // the model's bottom is on the floor, 0.5 below the middle of the cell
+
+    this.turner.remove(this.placeholder);
+    this.placeholder.traverse((object) => {
+      if (object.geometry) object.geometry.dispose();
+      if (object.material && !object.material.isLineBasicMaterial) object.material.dispose();
+    });
+    this.turner.add(model);
+    this.model = model;
+
+    this.rays = rays;
+    this.rays.scale.setScalar(0.001);
+
+    // Soft glow at the aperture while powered
+    const texture = getApertureGlowTexture();
+    if (texture) {
+      this.glow = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: texture,
+          color: CYAN,
+          transparent: true,
+          opacity: 0,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      this.glow.scale.set(RECEIVER_GLOW_SIZE, RECEIVER_GLOW_SIZE, 1);
+      this.glow.position.set(RECEIVER_APERTURE + 0.04, 0, 0);
+      this.glow.visible = false;
+      this.turner.add(this.glow);
+    }
+
+    this.applyLook(0);
+  }
+
+  // Which way the front looks: direction = [dx, dz]. instant = no turning animation.
+  setFacing(direction, instant = false) {
+    this.targetYaw = yawFor(direction);
+    if (instant) {
+      this.yaw = this.targetYaw;
+      this.turner.rotation.y = this.yaw;
     }
   }
 
-  update(delta) {
+  // The whole look of the receiver for the current blend (0 = waiting, 1 = powered)
+  applyLook(elapsed) {
+    const blend = this.blend;
+
+    // placeholder pads
+    this.padMaterial.color.copy(ORANGE).lerp(CYAN, blend);
+    this.padMaterial.emissive.copy(ORANGE).lerp(CYAN, blend);
+    this.padMaterial.emissiveIntensity = 0.9 + 1.0 * blend;
+    this.edgeMaterial.color.copy(ORANGE).lerp(CYAN, blend);
+
+    if (!this.model) return;
+
+    if (this.coreMaterial) {
+      // the crystal glows dimly while waiting, bright pale cyan with a gentle pulse when powered
+      this.coreMaterial.emissive.copy(CYAN).lerp(RECEIVER_CORE_ON, blend);
+      this.coreMaterial.emissiveIntensity = 0.25 + blend * (2.2 + 0.4 * Math.sin(elapsed * 5));
+    }
+    if (this.cyanMaterial) this.cyanMaterial.emissiveIntensity = this.cyanBase * (1 + 1.2 * blend);
+    if (this.orangeMaterial) {
+      // the game's language: orange = waiting, cyan = done
+      this.orangeMaterial.emissive.copy(ORANGE).lerp(CYAN, blend);
+      this.orangeMaterial.emissiveIntensity = this.orangeBase * (1 + 0.6 * blend);
+    }
+    if (this.rays) {
+      this.rays.scale.setScalar(blend < 0.02 ? 0.001 : blend * (1 + 0.08 * Math.sin(elapsed * 9)));
+    }
+    if (this.glow) {
+      this.glow.visible = blend > 0.02;
+      this.glow.material.opacity = blend * (0.7 + 0.15 * Math.sin(elapsed * 6));
+    }
+  }
+
+  update(delta, elapsed) {
+    // turn toward the beam, the short way round
+    const diff = THREE.MathUtils.euclideanModulo(this.targetYaw - this.yaw + Math.PI, Math.PI * 2) - Math.PI;
+    this.yaw += diff * Math.min(1, RECEIVER_TURN_SPEED * delta);
+    this.turner.rotation.y = this.yaw;
+
     const target = this.powered ? 1 : 0;
     this.blend += (target - this.blend) * Math.min(1, 12 * delta);
-    this.padMaterial.color.copy(ORANGE).lerp(CYAN, this.blend);
-    this.padMaterial.emissive.copy(ORANGE).lerp(CYAN, this.blend);
-    this.padMaterial.emissiveIntensity = 0.9 + 1.0 * this.blend;
-    this.edgeMaterial.color.copy(ORANGE).lerp(CYAN, this.blend);
+    this.applyLook(elapsed);
   }
 }
 
@@ -427,6 +575,11 @@ export class CircuitManager {
     this.reflectorAt = new Map(this.reflectors.map((r) => [cellKey(...r.cell), r]));
     this.receiverAt = new Map(this.receivers.map((r) => [cellKey(...r.cell), r]));
 
+    // Before any beam arrives, a receiver faces the mirror or source that can feed it
+    for (const receiver of this.receivers) {
+      if (!receiver.facingGiven) receiver.setFacing(this.guessFacing(receiver), true);
+    }
+
     // Beams are drawn as thin glowing boxes. They are rebuilt only when the beam path changes.
     this.beamGroup = new THREE.Group();
     scene.add(this.beamGroup);
@@ -442,6 +595,37 @@ export class CircuitManager {
     this.helixGeometry = new THREE.CylinderGeometry(1, 1, 1, 24, 1, true); // unit tube, scaled per beam piece
     this.timeUniform = { value: 0 }; // shared by every beam piece
     this.signature = '';
+  }
+
+  // Looks along the four directions from a receiver and returns the way to the nearest mirror,
+  // or to a source that shoots toward it. That is the way its front should look.
+  guessFacing(receiver) {
+    const [x, y, z] = receiver.cell;
+    let best = null;
+    let bestDistance = Infinity;
+    for (const d of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      for (let step = 1; step <= MAX_STEPS; step++) {
+        const cx = x + d[0] * step;
+        const cz = z + d[1] * step;
+        if (this.reflectorAt.has(cellKey(cx, y, cz))) {
+          if (step < bestDistance) {
+            best = d;
+            bestDistance = step;
+          }
+          break;
+        }
+        const source = this.sources.find((s) => s.cell[0] === cx && s.cell[1] === y && s.cell[2] === cz);
+        if (source) {
+          if (source.dir[0] === -d[0] && source.dir[1] === -d[1] && step < bestDistance) {
+            best = d;
+            bestDistance = step;
+          }
+          break;
+        }
+        if (this.level.isSolid(cx, y, cz)) break;
+      }
+    }
+    return best ?? [0, 1];
   }
 
   // The see-through spinning strands for one straight piece of beam
@@ -469,6 +653,7 @@ export class CircuitManager {
   trace() {
     const segments = [];
     const powered = new Set();
+    const arrivals = new Map(); // which way the beam was travelling when it reached a receiver
     const hit = new Set(); // mirrors that a beam is bouncing off right now
 
     for (const source of this.sources) {
@@ -503,8 +688,10 @@ export class CircuitManager {
 
         const receiver = this.receiverAt.get(key);
         if (receiver) {
-          segments.push([y, start[0], start[1], faceX, faceZ]);
+          // the beam ends at the receiver's aperture, which turns to face it
+          segments.push([y, start[0], start[1], cx - d[0] * RECEIVER_APERTURE, cz - d[1] * RECEIVER_APERTURE]);
           powered.add(receiver);
+          arrivals.set(receiver, d);
           ended = true;
         } else if (this.level.isSolid(cx, y, cz)) {
           segments.push([y, start[0], start[1], faceX, faceZ]);
@@ -515,7 +702,7 @@ export class CircuitManager {
         }
       }
     }
-    return { segments, powered, hit };
+    return { segments, powered, hit, arrivals };
   }
 
   rebuildBeams(segments) {
@@ -551,7 +738,7 @@ export class CircuitManager {
 
   // Returns [{ door, powered }] for the mechanisms, so receivers can open doors
   update(delta, elapsed) {
-    const { segments, powered, hit } = this.trace();
+    const { segments, powered, hit, arrivals } = this.trace();
 
     const signature = segments.map((s) => s.join(',')).join('|');
     if (signature !== this.signature) {
@@ -566,7 +753,9 @@ export class CircuitManager {
 
     for (const receiver of this.receivers) {
       receiver.powered = powered.has(receiver);
-      receiver.update(delta);
+      const arrival = arrivals.get(receiver);
+      if (arrival) receiver.setFacing([-arrival[0], -arrival[1]]); // turn the front toward the beam
+      receiver.update(delta, elapsed);
     }
     return this.receivers.map((r) => ({ door: r.door, powered: r.powered }));
   }
