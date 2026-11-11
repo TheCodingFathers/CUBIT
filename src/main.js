@@ -12,6 +12,7 @@ import { WORLDS } from './worlds.js';
 import { progress } from './progress.js';
 import { createMenus } from './menus.js';
 import { createBackdrop } from './background.js';
+import { loadModel } from './level.js';
 
 // ---------------------------------------------------------------
 // Settings you can tweak. Lower PIXEL_RATIO_CAP = faster on weak GPUs.
@@ -50,7 +51,7 @@ const camera = new THREE.PerspectiveCamera(
   100
 );
 
-const backdrop = createBackdrop(COLORS.navy); // sky and far scenery behind the levels
+const backdrop = createBackdrop(COLORS.navy, loadModel); // sky and far scenery behind the levels
 
 const ambient = new THREE.AmbientLight(0xffffff, 0.6);
 scene.add(ambient);

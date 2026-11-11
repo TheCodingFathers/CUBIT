@@ -19,6 +19,9 @@ export const WORLDS = [
       sky: { top: 0x0a1230, mid: 0x0c1f5c, haze: 0x16379a }, // dark at the horizon, a soft blue glow far below
       specks: 70, // tiny far-away lights
       speckColor: 0x7fdcff,
+      // The dormant monolith, far away and below the level. heading = the direction the game camera looks along the
+      // ground (CAMERA_OFFSET in main.js), elevation = degrees below the horizon, scale = size of the model (about 10 tall).
+      monolith: { model: '/models/w01_monolith.glb', heading: [-6, -8], distance: 130, elevation: -24, scale: 3.6, yaw: 0.35 },
     },
   },
   {
