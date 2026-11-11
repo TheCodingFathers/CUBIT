@@ -29,14 +29,15 @@ export const WORLDS = [
         models: {
           slab: '/models/w01_island_slab.glb', // ruined broken arch, left of the monolith
           slabB: '/models/w01_island_slab_b.glb', // complete gate and a tall block stack, right of the monolith
-          cluster: '/models/w01_island_cluster.glb',
+          cluster: '/models/w01_island_cluster.glb', // compact pile of cubes hanging down
+          clusterB: '/models/w01_island_cluster_b.glb', // wide flat stack of plates with a pillar and broken-off pieces (smaller scale: the model is wider)
         },
         items: [
           { model: 'slab', azimuth: -34, elevation: -33, distance: 100, scale: 2.3, yaw: 0.5 },
           { model: 'slabB', azimuth: 36, elevation: -30, distance: 105, scale: 2.05, yaw: -0.5 },
           { model: 'cluster', azimuth: -14, elevation: -38, distance: 95, scale: 2.2, yaw: 0.3 },
-          { model: 'cluster', azimuth: 17, elevation: -43, distance: 90, scale: 2.0, yaw: -0.4 },
-          { model: 'cluster', azimuth: -26, elevation: -17, distance: 125, scale: 2.0, yaw: 0.8 },
+          { model: 'clusterB', azimuth: 17, elevation: -43, distance: 90, scale: 1.45, yaw: -0.4 },
+          { model: 'clusterB', azimuth: -26, elevation: -17, distance: 125, scale: 1.45, yaw: 0.8 },
           { model: 'cluster', azimuth: 27, elevation: -15, distance: 130, scale: 2.2, yaw: -0.7 },
         ],
         debris: { count: 34, seed: 7, minSize: 0.8, maxSize: 3.2 }, // loose cubes, one draw call

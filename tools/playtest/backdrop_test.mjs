@@ -40,6 +40,7 @@ const monolithFile = await readGlb('w01_monolith.glb');
 const slabFile = await readGlb('w01_island_slab.glb');
 const slabBFile = await readGlb('w01_island_slab_b.glb');
 const clusterFile = await readGlb('w01_island_cluster.glb');
+const clusterBFile = await readGlb('w01_island_cluster_b.glb');
 const bytes = monolithFile.bytes;
 const gltf = monolithFile.gltf;
 const models = {
@@ -47,6 +48,7 @@ const models = {
   '/models/w01_island_slab.glb': slabFile.gltf.scene,
   '/models/w01_island_slab_b.glb': slabBFile.gltf.scene,
   '/models/w01_island_cluster.glb': clusterFile.gltf.scene,
+  '/models/w01_island_cluster_b.glb': clusterBFile.gltf.scene,
 };
 const loadsBy = {};
 const loader = (u) => { loadsBy[u] = (loadsBy[u] ?? 0) + 1; return Promise.resolve(models[u]); };
@@ -67,10 +69,10 @@ check('World 01 shows sky, specks and monolith', sky.visible && specks.visible &
 check('monolith loaded once only', loadsBy['/models/w01_monolith.glb'] === 1);
 backdrop.setWorld(WORLDS[0]);
 await new Promise((r) => setTimeout(r, 20));
-check('switching back to the same world does not load anything again', Object.values(loadsBy).every((n) => n === 1) && Object.keys(loadsBy).length === 4 && backdrop.monolith.children.length === 1);
+check('switching back to the same world does not load anything again', Object.values(loadsBy).every((n) => n === 1) && Object.keys(loadsBy).length === 5 && backdrop.monolith.children.length === 1);
 
 const all = triangles(backdrop.scene);
-check('whole backdrop is light (under 3000 triangles)', all < 3000, `${all}`);
+check('whole backdrop is light (under 3500 triangles)', all < 3500, `${all}`);
 check('few draw calls (under 24)', drawCalls(backdrop.scene) < 24, `${drawCalls(backdrop.scene)}`);
 check('backdrop never writes depth for sky and specks', [sky, specks].every((m) => m.material.depthWrite === false));
 check('only two lights in the backdrop scene', backdrop.scene.children.filter((o) => o.isLight).length === 2);
@@ -103,9 +105,9 @@ check('monolith is fully on screen', Math.min(...xs) > -1 && Math.max(...xs) < 1
 check('monolith stays in the upper part of the view (not behind the player)', Math.min(...ys) > -0.35, `${Math.min(...ys)}`);
 
 // ISLANDS: the models, the placement and the cost
-const slabTris = triangles(slabFile.gltf.scene), slabBTris = triangles(slabBFile.gltf.scene), clusterTris = triangles(clusterFile.gltf.scene);
-check('island model files are small (under 60 KB each)', [slabFile, slabBFile, clusterFile].every((f) => f.bytes.length < 60 * 1024), `${slabFile.bytes.length} ${slabBFile.bytes.length} ${clusterFile.bytes.length}`);
-check('island models are light (slabs under 700, cluster under 500 triangles)', slabTris > 0 && slabTris < 700 && slabBTris > 0 && slabBTris < 700 && clusterTris > 0 && clusterTris < 500, `${slabTris} ${slabBTris} ${clusterTris}`);
+const slabTris = triangles(slabFile.gltf.scene), slabBTris = triangles(slabBFile.gltf.scene), clusterTris = triangles(clusterFile.gltf.scene), clusterBTris = triangles(clusterBFile.gltf.scene);
+check('island model files are small (under 60 KB each)', [slabFile, slabBFile, clusterFile, clusterBFile].every((f) => f.bytes.length < 60 * 1024), `${slabFile.bytes.length} ${slabBFile.bytes.length} ${clusterFile.bytes.length}`);
+check('island models are light (slabs under 700, cluster under 500 triangles)', slabTris > 0 && slabTris < 700 && slabBTris > 0 && slabBTris < 700 && clusterTris > 0 && clusterTris < 500 && clusterBTris > 0 && clusterBTris < 500, `${slabTris} ${slabBTris} ${clusterTris}`);
 const islandCfg = WORLDS[0].backdrop.islands;
 check('World 01 has island data and every island model file exists', !!islandCfg && Object.values(islandCfg.models).every((m) => fs.existsSync(path.join(root, 'public', m))) && islandCfg.items.every((i) => islandCfg.models[i.model]));
 check('islands are built and visible in World 01', backdrop.islands.visible && backdrop.islands.children.length > 0, `${backdrop.islands.children.length}`);
@@ -124,6 +126,9 @@ for (const mesh of instanced) {
 }
 check('every island is in front of the camera and on screen', projected.length === islandCfg.items.length * 3 && projected.every((p) => p.z < 1 && Math.abs(p.x) < 1.05 && p.y > -1 && p.y < 1), JSON.stringify(projected.map((p) => [p.x.toFixed(2), p.y.toFixed(2)])));
 const slabItems = islandCfg.items.filter((item) => item.model.startsWith('slab'));
+const clusterItems = islandCfg.items.filter((item) => item.model.startsWith('cluster'));
+const clustersLeftToRight = [...clusterItems].sort((a, b) => a.azimuth - b.azimuth); // order on screen, not order in the list
+check('the four small islands use both cluster models, two of each, and neighbours on screen never match', clusterItems.length === 4 && clusterItems.filter((i) => i.model === 'cluster').length === 2 && clusterItems.filter((i) => i.model === 'clusterB').length === 2 && clustersLeftToRight.every((item, i) => i === 0 || item.model !== clustersLeftToRight[i - 1].model), clustersLeftToRight.map((i) => i.model).join());
 check('the two big islands use two different models (not the same asset twice)', slabItems.length === 2 && slabItems[0].model !== slabItems[1].model, slabItems.map((i) => i.model).join());
 // the big islands are the instanced meshes with exactly one copy (the clusters have four)
 const slabXs = instanced.filter((o) => o !== debrisMesh && o.count === 1).map((mesh) => {
@@ -140,7 +145,7 @@ for (const mesh of instanced) {
 }
 check('no orange on the islands (orange means Core Fragment)', orangeIsland.length === 0, orangeIsland.join());
 const seams = instanced.filter((o) => o.material.isMeshBasicMaterial);
-check('island seams are cyan but dimmer than the gameplay cyan', seams.length === 3 && seams.every((s) => s.material.color.g < 0.9 && s.material.color.b > 0.4), `${seams.length}`);
+check('island seams are cyan but dimmer than the gameplay cyan', seams.length === 4 && seams.every((s) => s.material.color.g < 0.9 && s.material.color.b > 0.4), `${seams.length}`);
 
 // motion: the rings turn, the crystal pulses
 const ringA = backdrop.monolith.getObjectByName('Monolith_RingA');
