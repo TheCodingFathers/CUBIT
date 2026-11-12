@@ -12,7 +12,7 @@ import { WORLDS } from './worlds.js';
 import { progress } from './progress.js';
 import { createMenus } from './menus.js';
 import { createBackdrop } from './background.js';
-import { loadModel } from './level.js';
+import { loadModel, setFloorColor } from './level.js';
 
 // ---------------------------------------------------------------
 // Settings you can tweak. Lower PIXEL_RATIO_CAP = faster on weak GPUs.
@@ -77,14 +77,50 @@ function worldOf(levelIndex) {
   return WORLDS.find((world) => world.levels.includes(levelIndex)) ?? WORLDS[0];
 }
 
+// REVIEW TOOL (temporary, light pass): press L to cycle through the world's lightPresets and compare them live.
+// It only works while REVIEW_LEVEL_SELECT is true, and the chosen preset stays when you change level.
+let reviewLight = 0;
+
+function applyLighting(world) {
+  const preset = REVIEW_LEVEL_SELECT ? world.lightPresets?.[reviewLight % world.lightPresets.length] : null;
+  const look = preset ?? world;
+  ambient.color.set(look.ambient.color);
+  ambient.intensity = look.ambient.intensity;
+  sun.color.set(look.sun.color);
+  sun.intensity = look.sun.intensity;
+  sun.position.set(...look.sun.position);
+}
+
+function cycleReviewLight() {
+  const world = worldOf(levels.index);
+  if (!world.lightPresets) return;
+  reviewLight = (reviewLight + 1) % world.lightPresets.length;
+  applyLighting(world);
+  showNotice(`Light ${reviewLight + 1}/${world.lightPresets.length}: ${world.lightPresets[reviewLight].name}`);
+}
+
+// REVIEW TOOL (temporary, floor color): press K to cycle through the world's floorPresets and compare them live.
+// Like the light presets, it only works while REVIEW_LEVEL_SELECT is true and the chosen color stays when you change level.
+let reviewFloor = 0;
+
+function applyFloor(world) {
+  const preset = REVIEW_LEVEL_SELECT ? world.floorPresets?.[reviewFloor % world.floorPresets.length] : null;
+  setFloorColor(preset?.color ?? world.floorColor); // no color in the world: the default slate
+}
+
+function cycleReviewFloor() {
+  const world = worldOf(levels.index);
+  if (!world.floorPresets) return;
+  reviewFloor = (reviewFloor + 1) % world.floorPresets.length;
+  applyFloor(world);
+  showNotice(`Floor ${reviewFloor + 1}/${world.floorPresets.length}: ${world.floorPresets[reviewFloor].name}`);
+}
+
 function applyWorld(levelIndex) {
   const world = worldOf(levelIndex);
   backdrop.setWorld(world);
-  ambient.color.set(world.ambient.color);
-  ambient.intensity = world.ambient.intensity;
-  sun.color.set(world.sun.color);
-  sun.intensity = world.sun.intensity;
-  sun.position.set(...world.sun.position);
+  applyLighting(world);
+  applyFloor(world);
 }
 applyWorld(0);
 
@@ -525,6 +561,8 @@ function animate() {
     if (input.wasPressed('Escape')) menus.back();
   } else if (input.wasPressed('Escape')) setPaused(!paused);
   if (input.wasPressed('KeyM')) showNotice(audio.toggleMute() ? 'Sound off' : 'Sound on');
+  if (REVIEW_LEVEL_SELECT && input.wasPressed('KeyL')) cycleReviewLight(); // REVIEW TOOL: compare light presets
+  if (REVIEW_LEVEL_SELECT && input.wasPressed('KeyK')) cycleReviewFloor(); // REVIEW TOOL: compare floor colors
 
   if (!paused && !menus.isOpen) {
     // Abilities: SHIFT (Q) and ROTATE (R)
