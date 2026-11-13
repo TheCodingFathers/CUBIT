@@ -6,15 +6,18 @@ import { CoreFragment, FragmentManager } from './coreFragment.js';
 import { PuzzleManager } from './puzzleManager.js';
 import { MechanismManager } from './mechanisms.js';
 import { CircuitManager } from './circuit.js';
+import { TeleportArch } from './teleportArch.js';
 
 // Loads, restarts and unloads levels.
 // Everything a level creates goes into ONE group, so unloading is simple:
 // free the memory of everything in the group, then remove the group from the scene.
 export class LevelManager {
-  constructor(scene, player, levels) {
+  // arches = optional teleport arches by level name (see ARCHES in worlds.js)
+  constructor(scene, player, levels, arches = {}) {
     this.scene = scene;
     this.player = player;
     this.levels = levels; // list of level data objects
+    this.arches = arches;
     this.index = -1;
 
     this.group = null;
@@ -23,6 +26,7 @@ export class LevelManager {
     this.fragments = null;
     this.mechanisms = null;
     this.circuit = null;
+    this.arch = null;
   }
 
   get data() {
@@ -70,6 +74,10 @@ export class LevelManager {
       this.fragments.add(new CoreFragment(this.group, cell));
     }
 
+    // A teleport arch, if this level has one (it comes out when CUBIT goes near it)
+    const archSpec = this.arches[data.name];
+    this.arch = archSpec ? new TeleportArch(this.group, this.level, archSpec) : null;
+
     // Put CUBIT in the new level
     this.player.setLevel(this.level, data.start);
     this.player.reset();
@@ -103,6 +111,7 @@ export class LevelManager {
     this.fragments = null;
     this.mechanisms = null;
     this.circuit = null;
+    this.arch = null;
   }
 
   // Returns true if CUBIT collected a fragment this frame
@@ -111,6 +120,8 @@ export class LevelManager {
     this.puzzles.update(delta);
     const receivers = this.circuit.update(delta, elapsed);
     this.mechanisms.update(delta, elapsed, [this.player, ...extraActors], receivers);
-    return this.fragments.update(delta, elapsed, this.player);
+    const gained = this.fragments.update(delta, elapsed, this.player);
+    this.arch?.update(delta, elapsed, this.player, this.complete); // after the fragments, so 'complete' is up to date
+    return gained;
   }
 }

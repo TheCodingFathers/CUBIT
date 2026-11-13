@@ -73,3 +73,12 @@ export const WORLDS = [
     levels: [],
   },
 ];
+
+// TELEPORT ARCHES (see teleportArch.js), by level name. The arch comes out when CUBIT goes near it and opens when the level
+// is complete. Walking into it takes CUBIT to the level named in 'to'.
+//   cell = the floor cube it stands on, axis = the direction CUBIT walks through it ('x' or 'z')
+// The playtest area (levels 1 to 3) ends with this arch. For now it leads to the next level; when the monolith island
+// (hub) exists, 'to' will name that instead (see the World 01 Map note in the vault).
+export const ARCHES = {
+  'Turn the World': { cell: [-9, 0, -6], axis: 'x', to: 'Connected' },
+};

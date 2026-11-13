@@ -8,7 +8,7 @@ import { CoreEcho, ECHO_MAX_SECONDS } from './echo.js';
 import { BlobShadow } from './blobShadow.js';
 import { audio } from './audio.js';
 import { LEVELS } from './levels/index.js';
-import { WORLDS } from './worlds.js';
+import { WORLDS, ARCHES } from './worlds.js';
 import { progress } from './progress.js';
 import { createMenus } from './menus.js';
 import { createBackdrop } from './background.js';
@@ -69,7 +69,7 @@ const shadow = new BlobShadow(scene); // soft shadow under CUBIT: makes jumps an
 for (const type of ['keydown', 'pointerdown']) window.addEventListener(type, audio.unlock);
 player.onJump = () => audio.jump();
 player.onLand = () => audio.land();
-const levels = new LevelManager(scene, player, LEVELS);
+const levels = new LevelManager(scene, player, LEVELS, ARCHES);
 levels.load(0);
 
 // WORLDS: each world has its own background and lights (see worlds.js)
@@ -192,7 +192,9 @@ function refreshHud() {
   const fragments = levels.fragments;
 
   fragmentCountLabel.textContent = `${fragments.collectedCount} / ${fragments.total}`;
-  completeHint.textContent = nextLevelIndex() !== null ? 'Enter for the next level' : 'Enter for the level menu';
+  completeHint.textContent = levels.arch
+    ? 'Walk into the glowing arch'
+    : nextLevelIndex() !== null ? 'Enter for the next level' : 'Enter for the level menu';
   completeScreen.classList.toggle('visible', levels.complete);
 
   // Only show the abilities this level uses
@@ -342,6 +344,22 @@ function showNotice(text) {
 // First-time hints: one short line the first time a level uses a mechanic (once per page load)
 // ---------------------------------------------------------------
 const HINTS = [
+  // The playtest area (levels 1 to 3) teaches the controls one at a time
+  {
+    id: 'move',
+    when: (data) => data.name === 'First Steps',
+    text: 'W A S D to move, Space to jump. Reach the glowing orange Core Fragment.',
+  },
+  {
+    id: 'shift',
+    when: (data) => (data.blocks ?? []).some((block) => !block.gravity),
+    text: 'Walk up to a block and press Q to SHIFT it to its next place. Use it to build yourself a path.',
+  },
+  {
+    id: 'rotate',
+    when: (data) => (data.structures ?? []).length > 0,
+    text: 'Stand near a structure and press R to ROTATE it a quarter turn. Turn it into a bridge.',
+  },
   {
     id: 'echo',
     when: (data) => !!data.echo,
@@ -493,6 +511,34 @@ function goToLevel(index) {
   showNotice(levelTitle(index));
 }
 
+// TELEPORT ARCH: when CUBIT walks into the open arch, the screen fades, the level it leads to loads, and the screen fades back
+let teleporting = false;
+const teleportFade = document.createElement('div');
+teleportFade.id = 'teleport-fade';
+teleportFade.style.cssText = [
+  'position: fixed',
+  'inset: 0',
+  'background: #0a1230',
+  'opacity: 0',
+  'transition: opacity 0.5s ease',
+  'pointer-events: none',
+  'z-index: 30',
+].join(';');
+document.body.appendChild(teleportFade);
+
+function startTeleport(levelName) {
+  const target = LEVELS.findIndex((level) => level.name === levelName);
+  if (teleporting || target < 0) return;
+  teleporting = true;
+  audio.receiverOn();
+  teleportFade.style.opacity = '1';
+  setTimeout(() => {
+    goToLevel(target);
+    teleportFade.style.opacity = '0';
+    teleporting = false;
+  }, 550);
+}
+
 // Marks the level you are in right now
 function refreshLevelButtons() {
   levelButtons.forEach((button, index) => button.classList.toggle('current', index === levels.index));
@@ -564,7 +610,7 @@ function animate() {
   if (REVIEW_LEVEL_SELECT && input.wasPressed('KeyL')) cycleReviewLight(); // REVIEW TOOL: compare light presets
   if (REVIEW_LEVEL_SELECT && input.wasPressed('KeyK')) cycleReviewFloor(); // REVIEW TOOL: compare floor colors
 
-  if (!paused && !menus.isOpen) {
+  if (!paused && !menus.isOpen && !teleporting) {
     // Abilities: SHIFT (Q) and ROTATE (R)
     if (input.wasPressed('KeyQ')) useAbility('shift');
     if (input.wasPressed('KeyR')) useAbility('rotate');
@@ -586,7 +632,7 @@ function animate() {
 
     // Restart the level (Backspace), or go on to the next one when finished (Enter)
     if (input.wasPressed('Backspace')) restartLevel();
-    if (input.wasPressed('Enter') && levels.complete) {
+    if (input.wasPressed('Enter') && levels.complete && !levels.arch) { // a level with a teleport arch ends through the arch
       const next = nextLevelIndex();
       if (next !== null) goToLevel(next);
       else menus.showSelect(); // end of the world: back to the level menu
@@ -611,6 +657,13 @@ function animate() {
     updateEchoHud();
     updateGravityHud();
     watchSounds();
+    if (levels.arch) {
+      if (levels.arch.consumeOpened()) {
+        audio.doorOpen();
+        showNotice('The arch is open');
+      }
+      if (levels.arch.consumeEntered()) startTeleport(levels.arch.destination);
+    }
   }
 
   // Smooth camera follow (the view turns with gravity)
