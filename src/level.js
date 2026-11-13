@@ -16,7 +16,7 @@ const CORE_PLATFORM_URL = '/models/core_fragment_platform.glb'; // the cube unde
 // FLOOR LOOK ------------------------------------------------------------------------------
 // The slate color of the floor, the base blocks and the Core Fragment platform. A world sets it in worlds.js
 // (floorColor); main.js passes it in with setFloorColor. SHIFT blocks keep their own blue on purpose.
-const DEFAULT_FLOOR_COLOR = 0x303744; // cool graphite slate
+const DEFAULT_FLOOR_COLOR = 0x414653; // muted steel gray (concept B)
 let floorColor = DEFAULT_FLOOR_COLOR;
 const liveLevels = new Set(); // levels whose floor color can still change (the ones that are on screen)
 

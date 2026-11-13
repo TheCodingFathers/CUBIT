@@ -11,26 +11,12 @@ export const WORLDS = [
     id: 1,
     name: 'The Awakening',
     background: 0x0a1230, // deep navy
-    // FLOOR: the slate of the floor tiles, base blocks and Core platform (concept A, Cool Graphite Slate). Worlds without one use this too.
-    floorColor: 0x303744,
-    // FLOOR COLOR REVIEW (temporary): in review mode press K in the game to cycle through these four colors from the concept sheet.
-    // When one is chosen it is copied into floorColor above, and this list is deleted.
-    floorPresets: [
-      { name: 'A Cool Graphite Slate', color: 0x303744 },
-      { name: 'B Muted Steel Gray', color: 0x414653 },
-      { name: 'C Desaturated Warm Stone', color: 0x494641 },
-      { name: 'D Blue Charcoal', color: 0x252d3b },
-    ],
-    ambient: { color: 0xffffff, intensity: 0.6 },
-    sun: { color: 0xffffff, intensity: 1.2, position: [4, 8, 3] },
-    // LIGHT PASS (temporary): presets to compare live. In review mode press L in the game to cycle through them.
-    // When one is chosen it is copied into ambient and sun above, and this list is deleted.
-    lightPresets: [
-      { name: 'Current', ambient: { color: 0xffffff, intensity: 0.6 }, sun: { color: 0xffffff, intensity: 1.2, position: [4, 8, 3] } },
-      { name: 'Cool dusk', ambient: { color: 0xb8cfff, intensity: 0.55 }, sun: { color: 0xdfe9ff, intensity: 1.15, position: [-5, 8, 3] } },
-      { name: 'Moody', ambient: { color: 0x93b0ff, intensity: 0.4 }, sun: { color: 0xcfe0ff, intensity: 1.35, position: [-6, 7, 2] } },
-      { name: 'Cyan wash', ambient: { color: 0xa8e6ff, intensity: 0.5 }, sun: { color: 0xeaf6ff, intensity: 1.2, position: [-4, 9, 5] } },
-    ],
+    // FLOOR: the slate of the floor tiles, base blocks and Core platform (concept B, Muted Steel Gray, chosen 2026-11-13).
+    // Worlds without a floorColor use the same default (DEFAULT_FLOOR_COLOR in src/level.js).
+    floorColor: 0x414653,
+    // LIGHTS: the "Moody" look, chosen from the light pass presets on 2026-11-13 (cool dim ambient, strong sun from the upper left)
+    ambient: { color: 0x93b0ff, intensity: 0.4 },
+    sun: { color: 0xcfe0ff, intensity: 1.35, position: [-6, 7, 2] },
     levels: playable,
     // BACKDROP (see background.js): the sky behind the levels. A world without one keeps its flat background color.
     backdrop: {

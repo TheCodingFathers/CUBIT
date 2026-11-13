@@ -132,7 +132,7 @@ const scene = new THREE.Scene();
 const levelGroup = new THREE.Group();
 scene.add(levelGroup);
 const level = buildLevel(levelGroup, data, loader);
-check('before the models load, plain slate cubes stand in', level.meshes.length === 1 && level.placeholderMaterial.color.getHex() === 0x303744);
+check('before the models load, plain slate cubes stand in', level.meshes.length === 1 && level.placeholderMaterial.color.getHex() === 0x414653);
 await level.ready;
 const slateMeshes = level.meshes.filter((m) => m.material.name === 'TILE_Slate');
 const slateCount = slateMeshes.reduce((n, m) => n + m.count, 0);
@@ -140,18 +140,18 @@ const blueMeshes = level.meshes.filter((m) => m.material.name === 'TILE_Blue');
 check('every floor cell is drawn with a tile (the Core cell has its own platform)', level.floorTiles.size === 99 && slateCount === 99, `${level.floorTiles.size} ${slateCount}`);
 check('base blocks and the Core platform are drawn too', blueMeshes.reduce((n, m) => n + m.count, 0) === 101, `${blueMeshes.reduce((n, m) => n + m.count, 0)}`);
 check('few draw calls for the whole floor (under 30)', level.meshes.length < 30, `${level.meshes.length}`);
-check('the floor starts with the default slate #303744', slateMeshes.every((m) => m.material.color.getHex() === 0x303744));
-check('base blocks and the Core platform use the same slate', blueMeshes.every((m) => m.material.color.getHex() === 0x303744));
-check('the original model materials are not changed (SHIFT blocks keep their blue)', meshesOf(baseBlock.scene).every((o) => o.material.color.getHex() !== 0x303744));
+check('the floor starts with the default slate #414653', slateMeshes.every((m) => m.material.color.getHex() === 0x414653));
+check('base blocks and the Core platform use the same slate', blueMeshes.every((m) => m.material.color.getHex() === 0x414653));
+check('the original model materials are not changed (SHIFT blocks keep their blue)', meshesOf(baseBlock.scene).every((o) => o.material.color.getHex() !== 0x414653));
 const shades = Array.from(slateMeshes[0].instanceColor?.array ?? []);
 check('slate tiles differ slightly in shade (within 6%)', shades.length > 0 && Math.max(...shades) <= 1.0601 && Math.min(...shades) >= 0.9399 && Math.max(...shades) - Math.min(...shades) > 0.02, `${Math.min(...shades)}..${Math.max(...shades)}`);
-setFloorColor(0x414653);
-check('changing the floor color changes tiles, base blocks and the Core platform live', [...slateMeshes, ...blueMeshes].every((m) => m.material.color.getHex() === 0x414653));
+setFloorColor(0x252d3b);
+check('changing the floor color changes tiles, base blocks and the Core platform live', [...slateMeshes, ...blueMeshes].every((m) => m.material.color.getHex() === 0x252d3b));
 const nextGroup = new THREE.Group();
 scene.add(nextGroup);
 const next = buildLevel(nextGroup, { boxes: [{ from: [0, 0, 0], to: [1, 0, 1] }] }, loader);
-check('a level built after the change starts with the new color', next.placeholderMaterial.color.getHex() === 0x414653);
-setFloorColor(0x303744);
+check('a level built after the change starts with the new color', next.placeholderMaterial.color.getHex() === 0x252d3b);
+setFloorColor(0x414653);
 
 // when the models fail to load, the plain cubes stay and nothing crashes
 const warn = console.warn;
@@ -165,8 +165,8 @@ check('if the models fail to load, the plain cubes stay', failing.meshes.length 
 
 // ---------------------------------------------------------------- the worlds
 const w1 = WORLDS[0];
-check('World 01 has the floor color from the concept (#303744)', w1.floorColor === 0x303744);
-check('World 01 has the 4 floor colors of the concept sheet to compare', w1.floorPresets?.length === 4 && w1.floorPresets[0].color === w1.floorColor && [0x414653, 0x494641, 0x252d3b].every((c) => w1.floorPresets.some((p) => p.color === c)));
+check('World 01 has the chosen floor color (concept B, #414653)', w1.floorColor === 0x414653);
+check('the floor color review presets are gone', w1.floorPresets === undefined);
 
 console.log(failed ? `\n${failed} FLOOR TEST(S) FAILED` : '\nALL FLOOR TESTS PASSED');
 process.exit(failed ? 1 : 0);
